@@ -9,7 +9,11 @@ simulation:
   - name: simics
     exec: simics
 supported:
+  - dma
+  - gpio
+  - i2c
   - serial
+  - spi
 testing:
   timeout_multiplier: 2
   ignore_tags:
