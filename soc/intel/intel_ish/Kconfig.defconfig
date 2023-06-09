@@ -44,6 +44,15 @@ config APIC_TIMER_TSC_M
 endif
 endif
 
+config CACHE_MANAGEMENT
+	default y
+
+config X86_MFENCE_INSTRUCTION_SUPPORTED
+	default n
+
+config DCACHE_LINE_SIZE
+	default 16
+
 rsource "*/Kconfig.defconfig.series"
 
 endif # SOC_FAMILY_INTEL_ISH
