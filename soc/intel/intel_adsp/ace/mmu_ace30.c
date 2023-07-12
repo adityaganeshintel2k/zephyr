@@ -258,6 +258,16 @@ const struct xtensa_mmu_range xtensa_soc_mmu_ranges[] = {
 		"shared heap"
 	)
 
+#if !defined(CONFIG_SOF) && !defined(CONFIG_INTEL_ADSP_SIM)
+	/* FW Ready */
+	MEM_MAP_CONST_REGION(
+		(uint32_t)(L2_SRAM_BASE + 0x4000),
+		(uint32_t)(L2_SRAM_BASE + 0x4000 + 0x1000),
+		XTENSA_MMU_PERM_W,
+		"fwready"
+	)
+#endif
+
 	{
 		.start = (uint32_t)(ADSP_L1CC_ADDR),
 		.end   = (uint32_t)(ADSP_L1CC_ADDR + CONFIG_MMU_PAGE_SIZE),
