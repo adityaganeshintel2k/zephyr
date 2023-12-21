@@ -1402,7 +1402,11 @@ static int dai_ssp_set_config_tplg(struct dai_intel_ssp *dp, const struct dai_co
 		sspsp |= SSPSP_SCMODE(inverted_bclk);
 	}
 
+#ifdef CONFIG_SOC_SERIES_INTEL_ADSP_CAVS
 	sscr0 |= SSCR0_MOD | SSCR0_ACS;
+#else
+	sscr0 |= SSCR0_MOD;
+#endif
 
 	/* Additional hardware settings */
 
