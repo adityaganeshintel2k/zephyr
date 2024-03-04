@@ -59,6 +59,12 @@ config ESPRESSIF_QEMU_TARGET
 	  CONFIG_ESPRESSIF_QEMU. Board files use this symbol to opt into
 	  the espressif_qemu emu platform (SUPPORTED_EMU_PLATFORMS).
 
+config SIMICS_TARGET
+	bool
+	help
+	  Mark all SIMICS targets with this variable for checking whether we are
+	  running in an emulated environment.
+
 config NET_DRIVERS
 	bool
 	default y if QEMU_TARGET && NETWORKING

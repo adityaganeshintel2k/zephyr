@@ -11,7 +11,7 @@ config SOC_FAMILY_INTEL_ISH
 	select IOAPIC
 	select LOAPIC
 	select INTEL_HAL
-	select HAS_PM
+	select HAS_PM if !SIMICS_TARGET
 	select PM_STATE_SET_IRQ_UNLOCKED
 	select HAS_COVERAGE_SUPPORT
 	select SOC_EARLY_INIT_HOOK
