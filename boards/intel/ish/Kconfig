@@ -1,0 +1,11 @@
+# Copyright (c) 2024 Intel Corporation
+#
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_INTEL_ISH_5_4_1
+	bool
+	select SIMICS_TARGET
+
+config BOARD_INTEL_ISH_5_8_0
+	bool
+	select SIMICS_TARGET
