@@ -34,3 +34,8 @@ manifest:
       remote: thesofproject
       groups:
         - fat
+    - name: zephyr-intel
+      path: intel/zephyr-intel
+      repo-path: os.rtos.zephyr.zephyr-intel
+      revision: main-intel
+      remote: intel
