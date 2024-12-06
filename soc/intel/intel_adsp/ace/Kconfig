@@ -47,8 +47,8 @@ config SOC_INTEL_COMM_WIDGET
 	  DSP Communication Widget is a device for generic sideband message transmit/receive.
 
 config SRAM_RETENTION_MODE
-	bool "SRAM retention mode during initialization"
-	default y
+	bool "SRAM retention mode"
+	default y if !SOC_ACE40
 	help
 	  When this option is enabled, the SRAM retention mode will be
 	  activated during the firmware boot-up process. If disabled,
