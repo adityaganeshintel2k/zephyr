@@ -10,6 +10,25 @@ find_program(WHISPER_BIN
 )
 
 if(WHISPER_BIN STREQUAL WHISPER_BIN-NOTFOUND)
+  if(DEFINED ZEPHYR_WHISPER_MODULE_DIR)
+    if(DEFINED CONFIG_SOC_FAMILY)
+      find_program(WHISPER_BIN
+        NAMES whisper
+        PATHS
+        ${ZEPHYR_WHISPER_MODULE_DIR}/${CONFIG_SOC_FAMILY}/${CONFIG_SOC}/
+        ${ZEPHYR_WHISPER_MODULE_DIR}/${CONFIG_SOC_FAMILY}/
+      )
+    else()
+      find_program(WHISPER_BIN
+        NAMES whisper
+        PATHS
+        ${ZEPHYR_WHISPER_MODULE_DIR}/${CONFIG_SOC}/
+      )
+    endif()
+  endif()
+endif()
+
+if(WHISPER_BIN STREQUAL WHISPER_BIN-NOTFOUND)
   message(WARNING "Unable to find whisper binary.")
 else()
 
