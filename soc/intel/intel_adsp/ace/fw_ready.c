@@ -10,7 +10,6 @@
 #include <zephyr/device.h>
 #include <zephyr/init.h>
 #include <zephyr/toolchain.h>
-#include <zephyr/arch/xtensa/cache.h>
 #include <zephyr/sys/sys_io.h>
 #include <zephyr/sys/util_macro.h>
 #include <zephyr/cache.h>
