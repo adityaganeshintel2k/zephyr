@@ -24,6 +24,7 @@ jobs:
       ZEPHYR_SDK_INSTALL_DIR: '/opt/toolchains/${{ vars.ZEPHYR_SDK_VERSION }}'
     secrets:
       ELASTICSEARCH_KEY: ${{ secrets.ELASTICSEARCH_KEY }}
+      IT_ELASTICSEARCH_KEY: ${{ secrets.IT_ELASTICSEARCH_KEY }}
       HF_PRIVATE_KEY: ${{ secrets.HF_PRIVATE_KEY }}
       IGK_PRIVATE_KEY: ${{ secrets.IGK_PRIVATE_KEY }}
       ISH_SIMICS_FMOS_QA_SSH: ${{ secrets.ISH_SIMICS_FMOS_QA_SSH }}

@@ -22,4 +22,5 @@ jobs:
     secrets:
       ZEPHYR_INTEL_TOKEN: ${{ secrets.ZEPHYR_TOKEN }}
       ELASTICSEARCH_KEY: ${{ secrets.ELASTICSEARCH_KEY }}
+      IT_ELASTICSEARCH_KEY: ${{ secrets.IT_ELASTICSEARCH_KEY }}
       IGK_PRIVATE_KEY: ${{ secrets.IGK_PRIVATE_KEY }}

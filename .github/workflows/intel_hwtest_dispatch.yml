@@ -120,3 +120,4 @@ jobs:
       IGK_PRIVATE_KEY: ${{ secrets.IGK_PRIVATE_KEY }}
       HF_PRIVATE_KEY: ${{ secrets.HF_PRIVATE_KEY }}
       ELASTICSEARCH_KEY: ${{ secrets.ELASTICSEARCH_KEY }}
+      IT_ELASTICSEARCH_KEY: ${{ secrets.IT_ELASTICSEARCH_KEY }}
