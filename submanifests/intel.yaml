@@ -1,0 +1,14 @@
+manifest:
+  remotes:
+    - name: intel
+      url-base: https://github.com/intel-innersource
+    - name: thesofproject
+      url-base: https://github.com/thesofproject
+    - name: upstream
+      url-base: https://github.com/zephyrproject-rtos
+  projects:
+    - name: std_sim
+      path: intel/std_sim
+      repo-path: os.rtos.zephyr.tools.ace-std-sim
+      revision: 8def064920fc127874bbb44a01a1c3368a3ee341
+      remote: intel
