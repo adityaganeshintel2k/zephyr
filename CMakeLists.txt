@@ -2340,6 +2340,9 @@ if(SUPPORTED_EMU_PLATFORMS)
   if(TARGET debugserver_${default_emu})
     add_custom_target(debugserver DEPENDS debugserver_${default_emu})
   endif()
+  if(TARGET trace_${default_emu})
+    add_custom_target(trace DEPENDS trace_${default_emu})
+  endif()
 else()
   add_custom_target(run
     COMMAND
