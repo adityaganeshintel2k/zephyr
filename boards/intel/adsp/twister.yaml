@@ -41,7 +41,7 @@ variants:
     ram: 2048
     simulation:
       - name: custom
-        exec: acesim
+        exec: ls
     testing:
       timeout_multiplier: 4
   intel_adsp/ace15_mtpm:
@@ -51,7 +51,7 @@ variants:
     ram: 2048
     simulation:
       - name: custom
-        exec: acesim
+        exec: ls
     testing:
       timeout_multiplier: 4
   intel_adsp/ace30/ptl/sim:
@@ -59,7 +59,7 @@ variants:
     ram: 4096
     simulation:
       - name: custom
-        exec: acesim
+        exec: ls
     toolchain:
       - xt-clang
       - zephyr
@@ -79,7 +79,7 @@ variants:
       - xt-clang
     simulation:
       - name: custom
-        exec: acesim
+        exec: ls
     testing:
       timeout_multiplier: 8
   intel_adsp/ace40:
