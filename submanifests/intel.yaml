@@ -34,6 +34,13 @@ manifest:
       remote: thesofproject
       groups:
         - fat
+    - name: whisper
+      path: intel/whisper
+      repo-path: os.rtos.zephyr.tools.whisper
+      revision: f1c63006159d862bfc1f478cd1f7a74948cd5412
+      remote: intel
+      groups:
+        - whisper
     - name: zephyr-intel
       path: intel/zephyr-intel
       repo-path: os.rtos.zephyr.zephyr-intel
