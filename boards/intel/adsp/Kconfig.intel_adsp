@@ -1,4 +1,4 @@
-# Copyright (c) 2024 Intel Corporation
+# Copyright (c) 2025 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 config BOARD_INTEL_ADSP
@@ -15,3 +15,5 @@ config BOARD_INTEL_ADSP
 	select SOC_ACE40 if BOARD_INTEL_ADSP_ACE40_NVL
 	select SOC_ACE40 if BOARD_INTEL_ADSP_ACE40_NVL_SIM
 	select SOC_ACE40 if BOARD_INTEL_ADSP_ACE40_NVLS
+	select SOC_ACE40 if BOARD_INTEL_ADSP_ACE40_TTL
+	select SOC_ACE40 if BOARD_INTEL_ADSP_ACE40_TTL_SIM

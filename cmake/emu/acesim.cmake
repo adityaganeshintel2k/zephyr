@@ -16,8 +16,14 @@ find_program(
   NAMES acesim.py
   )
 
+if(${CONFIG_SOC} STREQUAL "ace40")
+  set(SOC "${CONFIG_SOC}_${CONFIG_RIMAGE_TARGET}")
+else()
+  set(SOC "${CONFIG_SOC}")
+endif()
+
 set(ACESIM_FLAGS
-  --soc ${CONFIG_SOC}
+  --soc ${SOC}
   --rimage ${APPLICATION_BINARY_DIR}/zephyr/zephyr.ri
   )
 

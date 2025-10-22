@@ -26,3 +26,6 @@ boards:
             variants:
               - name: 'sim'
           - name: 'nvls'
+          - name: 'ttl'
+            variants:
+              - name: 'sim'

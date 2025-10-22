@@ -82,6 +82,20 @@ variants:
         exec: ls
     testing:
       timeout_multiplier: 8
+  intel_adsp/ace40/ttl:
+    ram: 4096
+    toolchain:
+      - xt-clang
+  intel_adsp/ace40/ttl/sim:
+    type: sim
+    ram: 4096
+    toolchain:
+      - xt-clang
+    simulation:
+      - name: custom
+        exec: ls
+    testing:
+      timeout_multiplier: 8
   intel_adsp/ace40:
     twister: false
   intel_adsp/cavs25:
