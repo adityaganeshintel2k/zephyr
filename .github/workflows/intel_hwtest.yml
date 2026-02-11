@@ -1,0 +1,31 @@
+name: Run tests on Hardware (Intel)
+on:
+  push:
+    branches:
+      - main-intel
+      - ci/hwtest/*
+
+jobs:
+  run-intel-hwtest-push-main-intel:
+    name: 'main-intel - push hwtest'
+    uses: intel-innersource/os.rtos.zephyr.zephyr-intel/.github/workflows/intel_hwtest_reusable.yml@main-intel
+    with:
+      CONCURRENCY_GROUP_NAME: '${{ github.workflow_ref }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}-main-intel-push'
+      ES_PARSE_SCRIPT: 'scripts/ci/upload_test_results_es.py'
+      ES_INDEX: 'zephyr-tests-staging-1'
+      QUARANTINE_LIST: '.github/data/twister-quarantine-list.yml'
+      REPO_FULL_PATH: 'intel-innersource/os.rtos.zephyr.zephyr'
+      REPO_REF: 'main-intel'
+      SDK_DOCKER_VERSION: ${{ vars.ZEPHYR_DOCKER_VERSION }}
+      STATIC_REPORTS_BRANCH_NAME: 'master'
+      TARGET_GROUP: 'main-intel'
+      TARGETS_FILE: '.github/data/targets.json'
+      ZEPHYR_INTEL_BRANCH: 'main-intel'
+      ZEPHYR_SDK_INSTALL_DIR: '/opt/toolchains/${{ vars.ZEPHYR_SDK_VERSION }}'
+    secrets:
+      ELASTICSEARCH_KEY: ${{ secrets.ELASTICSEARCH_KEY }}
+      HF_PRIVATE_KEY: ${{ secrets.HF_PRIVATE_KEY }}
+      IGK_PRIVATE_KEY: ${{ secrets.IGK_PRIVATE_KEY }}
+      ISH_SIMICS_FMOS_QA_SSH: ${{ secrets.ISH_SIMICS_FMOS_QA_SSH }}
+      ISH_SIMICS_NUC_HWTEST_SSH_KEY: ${{ secrets.ISH_SIMICS_NUC_HWTEST_SSH_KEY }}
+      ZEPHYR_INTEL_TOKEN: ${{ secrets.ZEPHYR_TOKEN }}

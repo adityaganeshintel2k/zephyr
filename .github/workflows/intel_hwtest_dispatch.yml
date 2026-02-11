@@ -1,0 +1,122 @@
+name: Run tests on Hardware (Dispatch)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: |
+          Target or group of targets.
+          Examples:
+            all - runs on every target in targets.json
+            upstream - runs only targets within upstream group in targets.json
+            mec172xevb_assy6906/mec172x_nsz - runs only on mec172xevb_assy6906 platform
+        type: choice
+        required: true
+        default: 'main-intel'
+        options:
+          - all
+          - main-intel
+          - upstream
+          - intel_adsp/cavs25
+          - intel_adsp/ace15_mtpm/sim
+          - intel_adsp/ace20_lnl/sim
+          - intel_adsp/ace30/ptl/sim
+          - intel_adsp/ace40/nvl/sim
+          - intel_adsp/ace40/ttl/sim
+          - mec172xevb_assy6906/mec172x_nsz
+          - frdm_k64f/mk64f12
+          - nsim/nsim_em
+          - nsim/nsim_vpx5
+          - mec15xxevb_assy6853
+          - intel_ish_5_8_0
+          - intel_ish_5_8_0/intel_ish_5_8_0/simics
+          - intel_ish_5_4_1/intel_ish_5_4_1/simics
+          - intel_ish_5_4_1/intel_ish_5_4_1
+          - npcx9m6f_evb/npcx9m6f
+          - npcx4m8f_evb/npcx4m8f
+          - up_squared/apollo_lake
+          - it8xxx2_evb/it81302bx
+          - intel_adsp/ace15_mtpm
+          - intel_adsp/ace20_lnl
+          - intel_adsp/ace30/ptl
+          - cdns_swerv/s400/whisper
+          - cdns_swerv/s400/pmp/whisper
+          - cdns_swerv/s420/whisper
+          - cdns_swerv/s420/64/whisper
+      scope:
+        description: |
+          Test scope to run. Example acceptance.
+          Default: smoke
+        type: choice
+        required: true
+        default: 'smoke'
+        options:
+          - acceptance
+          - smoke
+          - hw_validation
+          - hw_validation_extended
+      debug:
+        description: |
+          Determine whether to use debug verbosity or not
+        type: choice
+        required: false
+        default: 'none'
+        options:
+          - none
+          - twister-debug
+      repository:
+        description: |
+          Repository to use for zephyr base ex. innersource or zephyrproject-rtos
+          Default: intel-innersource/os.rtos.zephyr.zephyr
+        type: string
+        required: false
+        default: 'intel-innersource/os.rtos.zephyr.zephyr'
+      commit-sha:
+        description: |
+          SHA of commit to use for zephyr code or branch name.
+          Both will work.
+          Default: main-intel
+        type: string
+        required: false
+        default: 'main-intel'
+      quarantine-list:
+        description: |
+          Path to the quarantine list example .github/data/pr-quarantine-list.yml
+          Default: .github/data/twister-quarantine-list.yml
+        type: string
+        required: false
+        default: '.github/data/twister-quarantine-list.yml'
+      zephyr-intel-branch:
+        description: |
+          Branch from zephyr-intel from where to fetch zephyr infrastructure.
+          Example for devel branch: devel/{idsid}
+          Default: main-intel
+        type: string
+        required: false
+        default: 'main-intel'
+
+jobs:
+  run-workflow-dispatch:
+    name: '${{ inputs.commit-sha }} - workflow dispatch hwtest'
+    uses: intel-innersource/os.rtos.zephyr.zephyr-intel/.github/workflows/intel_hwtest_reusable.yml@main-intel
+    with:
+      CONCURRENCY_GROUP_NAME: '${{ github.workflow_ref }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}-hwtest-dispatch'
+      TARGET_GROUP: '${{ inputs.target }}'
+      ES_PARSE_SCRIPT: 'scripts/ci/upload_test_results_es.py'
+      ES_INDEX: 'zephyr-tests-staging-1'
+      SDK_DOCKER_VERSION: ${{ vars.ZEPHYR_DOCKER_VERSION }}
+      STATIC_REPORTS_BRANCH_NAME: 'master_pr'
+      TARGETS_FILE: '.github/data/targets.json'
+      REPO_FULL_PATH: '${{ inputs.repository }}'
+      REPO_REF: '${{ inputs.commit-sha }}'
+      QUARANTINE_LIST: '${{ inputs.quarantine-list }}'
+      TWISTER_SCOPE: '${{ inputs.scope }}'
+      ZEPHYR_INTEL_BRANCH: '${{ inputs.zephyr-intel-branch }}'
+      ZEPHYR_SDK_INSTALL_DIR: '/opt/toolchains/${{ vars.ZEPHYR_SDK_VERSION }}'
+    secrets:
+      ZEPHYR_INTEL_TOKEN: ${{ secrets.ZEPHYR_TOKEN }}
+      ISH_SIMICS_NUC_HWTEST_SSH_KEY: ${{ secrets.ISH_SIMICS_NUC_HWTEST_SSH_KEY }}
+      ISH_SIMICS_FMOS_QA_SSH: ${{ secrets.ISH_SIMICS_FMOS_QA_SSH }}
+      IGK_PRIVATE_KEY: ${{ secrets.IGK_PRIVATE_KEY }}
+      HF_PRIVATE_KEY: ${{ secrets.HF_PRIVATE_KEY }}
+      ELASTICSEARCH_KEY: ${{ secrets.ELASTICSEARCH_KEY }}

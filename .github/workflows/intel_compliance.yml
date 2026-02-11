@@ -1,0 +1,13 @@
+name: Intel Compliance
+
+on: pull_request
+
+jobs:
+  intel_compliance:
+    uses: intel-innersource/os.rtos.zephyr.zephyr-intel/.github/workflows/intel_compliance_reusable.yml@main-intel
+    with:
+      BASE_REF: ${{ github.base_ref }}
+      CONCURRENCY_GROUP_NAME: '${{ github.workflow_ref }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}'
+      SDK_DOCKER_VERSION: ${{ vars.ZEPHYR_DOCKER_VERSION }}
+    secrets:
+      TOKEN: ${{ secrets.ZEPHYR_TOKEN }}

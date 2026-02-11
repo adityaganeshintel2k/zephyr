@@ -1,0 +1,58 @@
+name: Sync upstream zephyr repo
+
+on:
+  schedule:
+  - cron: "0 * * * *"
+  workflow_dispatch:
+
+jobs:
+  repo-sync:
+    runs-on: fmos-guest-ubuntu-12c
+    steps:
+    - name: Sync main branch
+      uses: intel-innersource/os.rtos.zephyr.devops.ci/actions/git-sync@main
+      with:
+        source_repo: "https://github.com/zephyrproject-rtos/zephyr.git"
+        branch: "main"
+
+    - name: Sync tags
+      uses: intel-innersource/os.rtos.zephyr.devops.ci/actions/git-sync@main
+      with:
+        source_repo: "https://github.com/zephyrproject-rtos/zephyr.git"
+        branch: "refs/tags/*"
+
+    - name: Sync v2.7-branch
+      uses: intel-innersource/os.rtos.zephyr.devops.ci/actions/git-sync@main
+      with:
+        source_repo: "https://github.com/zephyrproject-rtos/zephyr.git"
+        branch: "v2.7-branch"
+
+    - name: Sync v3.0-branch
+      uses: intel-innersource/os.rtos.zephyr.devops.ci/actions/git-sync@main
+      with:
+        source_repo: "https://github.com/zephyrproject-rtos/zephyr.git"
+        branch: "v3.0-branch"
+
+    - name: Sync v3.1-branch
+      uses: intel-innersource/os.rtos.zephyr.devops.ci/actions/git-sync@main
+      with:
+        source_repo: "https://github.com/zephyrproject-rtos/zephyr.git"
+        branch: "v3.1-branch"
+
+    - name: Sync v3.2-branch
+      uses: intel-innersource/os.rtos.zephyr.devops.ci/actions/git-sync@main
+      with:
+        source_repo: "https://github.com/zephyrproject-rtos/zephyr.git"
+        branch: "v3.2-branch"
+
+    - name: Sync v3.3-branch
+      uses: intel-innersource/os.rtos.zephyr.devops.ci/actions/git-sync@main
+      with:
+        source_repo: "https://github.com/zephyrproject-rtos/zephyr.git"
+        branch: "v3.3-branch"
+
+    - name: Sync v3.7-branch
+      uses: intel-innersource/os.rtos.zephyr.devops.ci/actions/git-sync@main
+      with:
+        source_repo: "https://github.com/zephyrproject-rtos/zephyr.git"
+        branch: "v3.7-branch"

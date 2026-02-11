@@ -12,3 +12,25 @@ manifest:
       repo-path: os.rtos.zephyr.tools.ace-std-sim
       revision: 8def064920fc127874bbb44a01a1c3368a3ee341
       remote: intel
+    - name: fat
+      path: intel/frameworks.validation.firmware-automated-testing.fat
+      repo-path: frameworks.validation.firmware-automated-testing.fat
+      submodules: false
+      revision: ww.15.24.v.1.1.15
+      remote: intel
+      groups:
+        - fat
+    - name: fat_submodules
+      path: intel/frameworks.validation.firmware-automated-testing.fat/cavs_scripts-py_externals
+      repo-path: frameworks.validation.firmware-automated-testing.fat-externals
+      revision: main
+      remote: intel
+      groups:
+        - fat
+    - name: sof_submodules
+      path: intel/converged-sof-modules
+      repo-path: converged-sof-modules
+      revision: main
+      remote: thesofproject
+      groups:
+        - fat
