@@ -46,3 +46,8 @@ manifest:
       repo-path: os.rtos.zephyr.zephyr-intel
       revision: main-intel
       remote: intel
+    - name: libpldm
+      path: modules/lib/libpldm
+      repo-path: os.rtos.zephyr.modules.libpldm
+      revision: 4fd0fe514935a6ce45893cdc426d4b4b2a06cdfb
+      remote: intel
