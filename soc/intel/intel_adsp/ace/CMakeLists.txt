@@ -37,6 +37,10 @@ if(CONFIG_XTENSA_MMU)
   zephyr_library_sources_ifdef(CONFIG_SOC_ACE40 mmu_ace40.c)
 endif()
 
+if(CONFIG_XTENSA_MPU)
+  zephyr_library_sources_ifdef(CONFIG_SOC_ACE50 mpu_ace50.c)
+endif()
+
 set(SOC_LINKER_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/linker.ld CACHE INTERNAL "")
 
 if(CONFIG_INTEL_ADSP_FWREADY_MSG)

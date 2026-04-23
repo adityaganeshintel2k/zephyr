@@ -44,6 +44,15 @@ config SOC_SERIES_INTEL_ADSP_ACE40
 	select CACHE_HAS_MIRRORED_MEMORY_REGIONS
 	select ATOMIC_OPERATIONS_BUILTIN if "$(ZEPHYR_TOOLCHAIN_VARIANT)" != "xcc"
 
+config SOC_SERIES_INTEL_ADSP_ACE50
+	# ROM has MPU already enabled. So we also have to forcibly enable MPU code.
+	select CPU_HAS_MPU
+	select XTENSA_MPU
+	select XTENSA_CPU_HAS_HIFI5
+	select INTEL_ADSP_MEMORY_IS_UNIFIED
+	select INTEL_ADSP_SOC_HAS_SMMU
+	select ATOMIC_OPERATIONS_ARCH
+
 config SOC_INTEL_COMM_WIDGET
 	bool "Intel Communication Widget driver"
 	default y

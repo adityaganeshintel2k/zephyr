@@ -1,0 +1,38 @@
+# Copyright (c) 2026 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+
+if SOC_ACE50
+
+config MP_MAX_NUM_CPUS
+	default 4
+
+config SYS_CLOCK_HW_CYCLES_PER_SEC
+	default 737280000 if XTENSA_TIMER
+	default 1000000 if INTEL_ADSP_SIM
+	default 38400000 if INTEL_ADSP_TIMER
+
+config XTENSA_CCOUNT_HZ
+	default 737280000
+
+# CONFIG_PRIVILEGED_STACK_SIZE must align by XCHAL_MPU_ALIGN.
+config PRIVILEGED_STACK_SIZE
+	default 4096 if XTENSA_MPU
+
+# xt-clang seems to generate some memory access patterns which
+# result in the simulator accessing incorrect memory or
+# messing with cached TLB entries when spinlock validation
+# is enabled. So disable this to avoid this issue.
+configdefault SPIN_VALIDATE
+	default n if INTEL_ADSP_SIM
+
+configdefault ICACHE_LINE_SIZE
+	default 128
+
+configdefault DCACHE_LINE_SIZE
+	default 128
+
+# There is no cached/uncached aliases. So this is not needed.
+configdefault DYNAMIC_OBJECTS_FORCE_STACK_CACHED
+	default n
+
+endif

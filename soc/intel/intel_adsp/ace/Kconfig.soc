@@ -48,6 +48,16 @@ config SOC_ACE40
 	help
 	  ACE 4.0 Nova Lake PCH
 
+config SOC_SERIES_INTEL_ADSP_ACE50
+	bool
+
+config SOC_ACE50
+	bool
+	select SOC_SERIES_INTEL_ADSP_ACE
+	select SOC_SERIES_INTEL_ADSP_ACE50
+	help
+	  ACE 5.0
+
 config SOC_SERIES
 	default "intel_adsp_ace" if SOC_SERIES_INTEL_ADSP_ACE
 
@@ -57,9 +67,11 @@ config SOC_TOOLCHAIN_NAME
 	default "intel_ace15_mtpm" if SOC_ACE20_LNL
 	default "intel_ace30_ptl" if SOC_ACE30
 	default "intel_ace40" if SOC_ACE40
+	default "intel_ace50" if SOC_ACE50
 
 config SOC
 	default "ace15_mtpm" if SOC_ACE15_MTPM
 	default "ace20_lnl" if SOC_ACE20_LNL
 	default "ace30" if SOC_ACE30
 	default "ace40" if SOC_ACE40
+	default "ace50" if SOC_ACE50

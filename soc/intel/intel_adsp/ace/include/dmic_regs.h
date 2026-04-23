@@ -355,6 +355,8 @@
 #include <ace30/dmic_regs_ace3x.h>
 #elif CONFIG_SOC_ACE40
 #include <ace40/dmic_regs_ace4x.h>
+#elif CONFIG_SOC_ACE50
+#include <ace50/dmic_regs_ace5x.h>
 #else
 #error "Unknown SoC"
 #endif

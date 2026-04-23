@@ -192,6 +192,10 @@ void soc_mp_startup(uint32_t cpu)
 	xtensa_mmu_init();
 #endif /* CONFIG_XTENSA_MMU */
 
+#ifdef CONFIG_XTENSA_MPU
+	xtensa_mpu_reinit();
+#endif /* CONFIG_XTENSA_MPU */
+
 	/* Must have this enabled always */
 	xtensa_irq_enable(ACE_INTC_IRQ);
 

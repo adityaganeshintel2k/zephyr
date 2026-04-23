@@ -87,6 +87,7 @@ config ADSP_CLOCK
 
 config HP_SRAM_RESERVE
 	int "Bytes to reserve at start of HP-SRAM"
+	default 425984 if SOC_ACE50 # ROM dictates where we can put VECBASE and code/data
 	default 65536
 	help
 	  Bytes to reserve at the start of HP-SRAM.  Zephyr will not
