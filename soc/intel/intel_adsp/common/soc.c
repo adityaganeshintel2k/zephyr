@@ -26,16 +26,28 @@ extern char _cached_end[];
 
 bool xtensa_soc_ptr_executable(const void *p)
 {
+#if defined(CONFIG_INTEL_ADSP_MEMORY_IS_MIRRORED)
 	return (p >= (void *)__text_region_start && p <= (void *)__text_region_end) ||
 		(p >= (void *)_imr_start && p <= (void *)_imr_end);
+#elif defined(CONFIG_INTEL_ADSP_MEMORY_IS_UNIFIED)
+	return ((p >= (void *)__text_region_start) && (p <= (void *)__text_region_end));
+#else
+	return false;
+#endif
 }
 
 bool xtensa_soc_stack_ptr_is_sane(uint32_t sp)
 {
+#if defined(CONFIG_INTEL_ADSP_MEMORY_IS_MIRRORED)
 	return ((char *)sp >= _end && (char *)sp <= _heap_sentry) ||
 		((char *)sp >= _cached_start && (char *)sp <= _cached_end) ||
 		(sp >= (IMR_BOOT_LDR_MANIFEST_BASE - CONFIG_ISR_STACK_SIZE)
 		 && sp <= IMR_BOOT_LDR_MANIFEST_BASE);
+#elif defined(CONFIG_INTEL_ADSP_MEMORY_IS_UNIFIED)
+	return ((char *)sp >= _end && (char *)sp <= _heap_sentry);
+#else
+	return false;
+#endif
 }
 
 static __imr int soc_init(void)

@@ -159,6 +159,12 @@ config INTEL_ADSP_MEMORY_IS_MIRRORED
 	  while the other is direct to memory. Selected by SoCs using this type of
 	  memory mapping.
 
+config INTEL_ADSP_MEMORY_IS_UNIFIED
+	bool
+	help
+	  When true, this indicates the virtual memory space has a unified layout.
+	  Selected by SoCs using this type of memory mapping.
+
 config INTEL_ADSP_CACHED_REGION
 	int "Cached RPO mapping"
 	depends on INTEL_ADSP_MEMORY_IS_MIRRORED

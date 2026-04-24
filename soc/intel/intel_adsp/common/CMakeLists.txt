@@ -85,6 +85,7 @@ add_custom_command(
   COMMAND ${CMAKE_OBJCOPY}
       --only-section .imr
       --only-section .imrdata
+      --only-section .boot_loader
       --only-section .module.boot
       --set-section-flags .module.boot=noload,readonly
       --rename-section .module.boot=.module
@@ -102,6 +103,7 @@ add_custom_command(
   COMMAND ${CMAKE_OBJCOPY}
       --remove-section .imr
       --remove-section .imrdata
+      --remove-section .boot_loader
       --remove-section .cold
       --remove-section .coldrodata
       --remove-section .module.boot
