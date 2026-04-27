@@ -1,0 +1,84 @@
+version = [3, 0]
+
+[adsp]
+name = "hml"
+image_size = "0x480000"
+alias_mask = "0x20000000"
+
+[[adsp.mem_zone]]
+type = "ROM"
+base = "0x3FF80000"
+size = "0x400"
+[[adsp.mem_zone]]
+type = "IMR"
+base = "0xA0000000"
+size = "0x8000000"
+[[adsp.mem_zone]]
+type = "HP-SRAM"
+base = "0x50000000"
+size = "0x480000"
+[[adsp.mem_zone]]
+type = "LP-SRAM"
+base = "0x40000000"
+size = "0x20000"
+
+[[adsp.mem_alias]]
+type = "unified"
+base = "0x50000000"
+[[adsp.mem_alias]]
+type = "unified_alias"
+base = "0x60000000"
+
+[cse]
+partition_name = "ADSP"
+[[cse.entry]]
+name = "ADSP.man"
+offset = "0x5c"
+length = "0x4b8"
+[[cse.entry]]
+name = "ADSP.met"
+offset = "0x4c0"
+length = "0x70"
+[[cse.entry]]
+name = "ADSP"
+offset = "0x540"
+length = "0x0" # calculated by rimage
+
+[css]
+
+[signed_pkg]
+name = "ADSP"
+[[signed_pkg.module]]
+name = "ADSP.met"
+
+[adsp_file]
+[[adsp_file.comp]]
+base_offset = "0x2000"
+
+[fw_desc.header]
+name = "ADSPFW"
+load_offset = "0x60000"
+
+[module]
+count = 2
+	[[module.entry]]
+	name = "BRNGUP"
+	uuid = "2B79E4F3-4675-F649-89DF-3BC194A91AEB"
+	affinity_mask = "0x1"
+	instance_count = "1"
+	domain_types = "0"
+	load_type = "0"
+	module_type = "0"
+	auto_start = "0"
+	index = 0
+
+	[[module.entry]]
+	name = "BASEFW"
+	uuid = "0E398C32-5ADE-BA4B-93B1-C50432280EE4"
+	affinity_mask = "3"
+	instance_count = "1"
+	domain_types = "0"
+	load_type = "0"
+	module_type = "0"
+	auto_start = "0"
+	index = 1

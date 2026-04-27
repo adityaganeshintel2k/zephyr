@@ -98,6 +98,20 @@ variants:
       timeout_multiplier: 8
   intel_adsp/ace40:
     twister: false
+  intel_adsp/ace50/hml/sim:
+    type: sim
+    ram: 4096
+    toolchain:
+      - xt-clang
+    simulation:
+      - name: custom
+        exec: ls
+    testing:
+      timeout_multiplier: 8
+  intel_adsp/ace50/hml:
+    twister: false
+  intel_adsp/ace50:
+    twister: false
   intel_adsp/cavs25:
     toolchain:
       - xcc

@@ -29,3 +29,8 @@ boards:
           - name: 'ttl'
             variants:
               - name: 'sim'
+      - name: ace50
+        variants:
+          - name: 'hml'
+            variants:
+              - name: 'sim'

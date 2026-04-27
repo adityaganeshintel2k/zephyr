@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+
+CONFIG_MAIN_STACK_SIZE=2048
+
+CONFIG_INTEL_ADSP_SIM=y
+
+CONFIG_GEN_ISR_TABLES=y
+CONFIG_GEN_IRQ_VECTOR_TABLE=n
+
+CONFIG_BUILD_OUTPUT_BIN=n
+
+CONFIG_DAI_SSP_HAS_POWER_CONTROL=y
+
+# Simulator runs the CPU cores sequentially so it is unable to actually
+# test concurrency. Though, we still want to test the start-up path for
+# core #1 and up. Fortunately the start-up routine for additional cores
+# is the same, we simply set the max CPUs to 2 for that. In addition,
+# this shortens the time to run lengthen multi-thread tests to more
+# reasonable durations.
+CONFIG_MP_MAX_NUM_CPUS=2
+
+# Since downstream projects are using speed optimization by default,
+# we should also default to speed optimization for testing purpose.
+CONFIG_SPEED_OPTIMIZATIONS=y
