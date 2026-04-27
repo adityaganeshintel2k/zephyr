@@ -16,10 +16,10 @@ find_program(
   NAMES acesim.py
   )
 
-if(${CONFIG_SOC} STREQUAL "ace40")
-  set(SOC "${CONFIG_SOC}_${CONFIG_RIMAGE_TARGET}")
-else()
+if(${CONFIG_SOC} MATCHES "ace[0-9][0-9]_.+")
   set(SOC "${CONFIG_SOC}")
+else()
+  set(SOC "${CONFIG_SOC}_${CONFIG_RIMAGE_TARGET}")
 endif()
 
 set(ACESIM_FLAGS
