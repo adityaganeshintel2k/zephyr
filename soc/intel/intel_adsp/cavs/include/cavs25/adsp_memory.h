@@ -49,6 +49,12 @@
 #define IMR_BOOT_LDR_MANIFEST_BASE 0xB0032000
 #define IMR_BOOT_LDR_TEXT_ENTRY_BASE (IMR_BOOT_LDR_MANIFEST_BASE + 0x6000)
 
+/** Entry point for BRNGUP module in SOF manifest */
+#define SOF_MAN_MOD_BRNGUP_ENTRY IMR_BOOT_LDR_TEXT_ENTRY_BASE
+
+/** Entry point for BASEFW module in SOF manifest */
+#define SOF_MAN_MOD_BASEFW_ENTRY RAM_BASE
+
 #define ADSP_L1_CACHE_PREFCTL_VALUE 0x1038
 
 /* L1 init */

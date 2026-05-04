@@ -83,6 +83,12 @@
 /* !!! FIXME: L3 heap base MUST be automatically calculated. !!! */
 #define IMR_L3_HEAP_BASE		(IMR_BOOT_LDR_STACK_BASE + IMR_BOOT_LDR_STACK_SIZE)
 
+/** Entry point for BRNGUP module in SOF manifest */
+#define SOF_MAN_MOD_BRNGUP_ENTRY	IMR_BOOT_LDR_TEXT_ENTRY_BASE
+
+/** Entry point for BASEFW module in SOF manifest */
+#define SOF_MAN_MOD_BASEFW_ENTRY	RAM_BASE
+
 #define ADSP_L1_CACHE_PREFCTL_VALUE 0x1038
 
 /* L1 init */
