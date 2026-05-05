@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (c) 2026 Intel Corporation
+
+description: Intel System Memory Mapping Unit (SMMU)
+
+compatible: "intel,smmu"
+
+include: [mm_drv.yaml]
+
+properties:
+  reg:
+    required: true
+
+  page-size:
+    required: true
+    type: int
+    enum:
+      - 4096
+      - 8192
+    description: |
+      Page size addressable by each translation entry.
