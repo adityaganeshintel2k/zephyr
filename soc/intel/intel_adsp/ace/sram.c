@@ -12,6 +12,10 @@
 #include <adsp_memory.h>
 #include <cpu_init.h>
 
+#ifdef CONFIG_INTEL_ADSP_SOC_HAS_SMMU
+#include <memory/smmu.h>
+#endif /* CONFIG_INTEL_ADSP_SOC_HAS_SMMU */
+
 __imr void hp_sram_init(uint32_t memory_size)
 {
 	ARG_UNUSED(memory_size);
@@ -28,7 +32,17 @@ __imr void hp_sram_init(uint32_t memory_size)
 		}
 	}
 
+#ifdef CONFIG_INTEL_ADSP_SOC_HAS_SMMU
+	/* If there is SMMU, the HPSRAM address space contains pages mapped to IMR
+	 * where the ROM copies the firmware. In addition, ROM does not map the whole
+	 * local SRAM space. Therefore, we cannot blindly zero out memory which
+	 * would wipe everything. So we need to pull in those IMR mapped pages into
+	 * local HPSRAM, and also maps the remaining memory into local HPSRAM.
+	 */
+	smmu_boot_mem_map();
+#else  /* CONFIG_INTEL_ADSP_SOC_HAS_SMMU */
 	bbzero((void *)L2_SRAM_BASE, L2_SRAM_SIZE);
+#endif /* CONFIG_INTEL_ADSP_SOC_HAS_SMMU */
 }
 
 __imr void lp_sram_init(void)

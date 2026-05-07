@@ -21,6 +21,10 @@
 #include <adsp_boot.h>
 #endif /* CONFIG_SOC_SERIES_INTEL_ADSP_ACE */
 
+#ifdef CONFIG_INTEL_ADSP_SOC_HAS_SMMU
+#include <memory/smmu.h>
+#endif /* CONFIG_INTEL_ADSP_SOC_HAS_SMMU */
+
 /* Important note about linkage:
  *
  * The C code here, starting from boot_core0(), is running entirely in
@@ -85,7 +89,6 @@ static __imr void parse_module(struct sof_man_fw_header *hdr,
 			       struct sof_man_module *mod)
 {
 	int i;
-	uint32_t bias;
 
 	/* each module has 3 segments */
 	for (i = 0; i < MANIFEST_SEGMENT_COUNT; i++) {
@@ -99,14 +102,16 @@ static __imr void parse_module(struct sof_man_fw_header *hdr,
 				continue;
 			}
 
-			bias = mod->segment[i].file_offset -
-				SOF_MAN_ELF_TEXT_OFFSET;
+#if !defined(CONFIG_INTEL_ADSP_SOC_HAS_SMMU)
+			uint32_t bias = mod->segment[i].file_offset - SOF_MAN_ELF_TEXT_OFFSET;
 
 			/* copy from IMR to SRAM */
 			bmemcpy((void *)mod->segment[i].v_base_addr,
 				(uint8_t *)hdr + bias,
 				mod->segment[i].flags.r.length *
 				HOST_PAGE_SIZE);
+#endif /* !CONFIG_INTEL_ADSP_SOC_HAS_SMMU */
+
 			break;
 		case SOF_MAN_SEGMENT_BSS:
 			/* already bbzero'd by sram init */

@@ -89,3 +89,8 @@ config SOC_SERIES_INTEL_ADSP_ACE_NUM_SPIN_RELAX_NOPS_ADD_CPU_ID
 	  This is to add some variations to the loop for each CPU to
 	  further avoid them hitting the RCW transactions at the same
 	  time.
+
+config INTEL_ADSP_SOC_HAS_SMMU
+	bool
+	help
+	  Enabled by SoC if it is the System Memory Mapping Unit (SMMU).
