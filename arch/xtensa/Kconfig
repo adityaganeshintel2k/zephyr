@@ -275,10 +275,6 @@ config XTENSA_MPU
 	select ARCH_MEM_DOMAIN_SYNCHRONOUS_API if USERSPACE
 	select CURRENT_THREAD_USE_NO_TLS if USERSPACE
 	select EXPERIMENTAL
-	# TODO: the target the MPU code developed on (basically sample_controller
-	#       plus MPU minus s32c1i) does not have cache or SMP capability.
-	#       Need to verify functionalities with targets supporting these.
-	depends on !CACHE && !SMP
 	help
 	  Enable support for Xtensa Memory Protection Unit.
 
