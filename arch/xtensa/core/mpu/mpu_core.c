@@ -655,6 +655,30 @@ void xtensa_mpu_init(void)
 	mpu_map_write(&xtensa_mpu_map_fg_kernel);
 }
 
+void xtensa_mpu_reinit(void)
+{
+	int entry;
+
+	const struct xtensa_mpu_map *map = &xtensa_mpu_map_fg_kernel;
+
+	/*
+	 * Note that this is not calling mpu_map_write() on purpose as it requires spinlocks to
+	 * work. When this function is called, we may not be at a point where atomic access is
+	 * usable. For example, the spinlock may be at the address only covered by background map
+	 * which has memory type for devices but not for atomic variables. So we program the MPU
+	 * hardware as-is, avoiding those issues.
+	 */
+
+	/* Disable all foreground segments before we start configuration. */
+	xtensa_mpu_mpuenb_write(0);
+
+	/* Write all the kernel MPU entries into hardware. */
+	for (entry = XTENSA_MPU_NUM_ENTRIES - 1; entry >= 0; entry--) {
+		__asm__ volatile("wptlb %0, %1\n\t"
+				 : : "a"(map->entries[entry].at), "a"(map->entries[entry].as));
+	}
+}
+
 #ifdef CONFIG_USERSPACE
 /**
  * Find the permission of a region at boot according to xtensa_mpu_ranges[].

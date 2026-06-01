@@ -344,6 +344,15 @@ extern const unsigned int xtensa_mpu_mem_type_ranges_num;
 void xtensa_mpu_init(void);
 
 /**
+ * @brief Re-initialize hardware MPU by writing kernel MPU entries.
+ *
+ * This re-initializes the MPU hardware by writing existing kernel MPU entries.
+ *
+ * @note This can only be called after xtensa_mpu_init().
+ */
+void xtensa_mpu_reinit(void);
+
+/**
  * @}
  */
 
