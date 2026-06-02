@@ -34,9 +34,6 @@ BUILD_ASSERT((CONFIG_PRIVILEGED_STACK_SIZE > 0) &&
 /** MPU foreground map for kernel mode. */
 static struct xtensa_mpu_map xtensa_mpu_map_fg_kernel;
 
-/** Make sure write to the MPU region is atomic. */
-static struct k_spinlock xtensa_mpu_lock;
-
 /*
  * Additional information about the MPU maps: foreground and background
  * maps.
@@ -75,6 +72,50 @@ static struct k_spinlock xtensa_mpu_lock;
  *   corresponds to the minimum segment size (MINSEGMENTSIZE)
  *   defined in the processor configuration.
  */
+
+/**
+ * @brief Lock a MPU map
+ *
+ * @param map Pointer to MPU map struct
+ * @return A key value that must be passed to mpu_map_unlock() when
+ *         lock is released.
+ *
+ * @see k_spin_lock
+ */
+static ALWAYS_INLINE int mpu_map_lock(struct xtensa_mpu_map *map)
+{
+	int key;
+
+	key = arch_irq_lock();
+
+#if defined(CONFIG_SMP) && (CONFIG_MP_MAX_NUM_CPUS > 1)
+	while (!atomic_cas(&map->locked, 0, 1)) {
+		do {
+			arch_spin_relax();
+		} while (atomic_get(&map->locked) != 0);
+	}
+#endif /* CONFIG_SMP && (CONFIG_MP_MAX_NUM_CPUS > 1) */
+
+	return key;
+}
+
+/**
+ * @breif Unlock a MPU map
+ *
+ * @param map Pointer to the MPU map struct
+ * @param key The value returned from mpu_map_lock() when this lock
+ *            was acquired.
+ *
+ * @see k_spin_unlock
+ */
+static ALWAYS_INLINE void mpu_map_unlock(struct xtensa_mpu_map *map, int key)
+{
+#if defined(CONFIG_SMP) && (CONFIG_MP_MAX_NUM_CPUS > 1)
+	(void)atomic_clear(&map->locked);
+#endif /* CONFIG_SMP && (CONFIG_MP_MAX_NUM_CPUS > 1) */
+
+	arch_irq_unlock(key);
+}
 
 /**
  * Find the memory type of a region according to xtensa_mpu_mem_type_ranges[].
@@ -311,8 +352,11 @@ static int mpu_map_region_add(struct xtensa_mpu_map *map,
 	uint8_t idx_e = 0;
 	uint32_t memory_type;
 	struct xtensa_mpu_entry *entry_slot_s, *entry_slot_e = NULL;
+	int key;
 
 	struct xtensa_mpu_entry *entries = map->entries;
+
+	key = mpu_map_lock(map);
 
 	if (start_addr >= end_addr) {
 		ret = -EINVAL;
@@ -552,6 +596,8 @@ end:
 #endif
 
 out:
+	mpu_map_unlock(map, key);
+
 	return ret;
 }
 
@@ -563,9 +609,9 @@ out:
 static inline void mpu_map_write(struct xtensa_mpu_map *map)
 {
 	int entry;
-	k_spinlock_key_t key;
+	int key;
 
-	key = k_spin_lock(&xtensa_mpu_lock);
+	key = mpu_map_lock(map);
 
 	/*
 	 * Clear MPU entries first, then write MPU entries in reverse order.
@@ -586,7 +632,7 @@ static inline void mpu_map_write(struct xtensa_mpu_map *map)
 				 : : "a"(map->entries[entry].at), "a"(map->entries[entry].as));
 	}
 
-	k_spin_unlock(&xtensa_mpu_lock, key);
+	mpu_map_unlock(map, key);
 }
 
 #ifdef CONFIG_USERSPACE

@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include <zephyr/toolchain.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/util_macro.h>
 
 #include <xtensa/config/core-isa.h>
@@ -188,6 +189,8 @@ struct xtensa_mpu_map {
 	 * Array of MPU entries.
 	 */
 	struct xtensa_mpu_entry entries[XTENSA_MPU_NUM_ENTRIES];
+
+	atomic_t locked;
 };
 
 /**
