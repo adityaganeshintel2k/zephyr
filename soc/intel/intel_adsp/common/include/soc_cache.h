@@ -58,6 +58,8 @@ static ALWAYS_INLINE void soc_cache_init(void)
 
 #if defined(CONFIG_INTEL_ADSP_MEMORY_IS_MIRRORED)
 #include "cache/mirrored.h"
+#elif defined(CONFIG_INTEL_ADSP_MEMORY_IS_UNIFIED)
+#include "cache/unified.h"
 #else
 static ALWAYS_INLINE bool soc_cache_is_ptr_cached(void *ptr)
 {
