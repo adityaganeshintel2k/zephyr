@@ -17,6 +17,9 @@
 extern char _heap_start[];
 extern char _heap_end[];
 
+extern char _cached_start[];
+extern char _cached_end[];
+
 /**
  * MPU memory type for cached local virtual address space.
  *
@@ -140,6 +143,15 @@ const struct xtensa_mpu_range xtensa_mpu_ranges[] = {
 		.end = (uintptr_t)__rodata_region_end,
 		.access_rights = XTENSA_MPU_ACCESS_P_RO_U_RO,
 	},
+
+#ifdef CONFIG_KERNEL_COHERENCE
+	/* cached segment */
+	{
+		.start = (uintptr_t)_cached_start,
+		.end = (uintptr_t)_cached_end,
+		.access_rights = XTENSA_MPU_ACCESS_P_RW_U_NA,
+	},
+#endif /* CONFIG_KERNEL_COHERENCE */
 };
 
 const unsigned int xtensa_mpu_ranges_num = ARRAY_SIZE(xtensa_mpu_ranges);
@@ -193,6 +205,15 @@ const struct xtensa_mpu_mem_type_region xtensa_mpu_mem_type_ranges[] = {
 		.end = (uintptr_t)__rodata_region_end,
 		.memory_type = MEM_TYPE_LOCAL_VM_CACHED,
 	},
+
+#ifdef CONFIG_KERNEL_COHERENCE
+	/* cached segment */
+	{
+		.start = (uintptr_t)_cached_start,
+		.end = (uintptr_t)_cached_end,
+		.memory_type = MEM_TYPE_LOCAL_VM_CACHED,
+	},
+#endif /* CONFIG_KERNEL_COHERENCE */
 
 	/* Local virtual address space alias */
 	{

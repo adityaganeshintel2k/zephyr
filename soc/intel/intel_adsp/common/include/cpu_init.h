@@ -165,6 +165,12 @@ static ALWAYS_INLINE void cpu_early_init(void)
 	 */
 	reg = VECBASE_RESET_PADDR_SRAM;
 	XTENSA_WSR("VECBASE", reg);
+
+#ifdef CONFIG_XTENSA_MPU
+	/* Disable cache from 0x0 - 0x3FFFFFFF as this is device MMIO space. */
+	reg = 0x3U;
+	XTENSA_WSR("CACHEADRDIS", reg);
+#endif /* CONFIG_XTENSA_MPU */
 }
 
 #endif /* __INTEL_ADSP_CPU_INIT_H */

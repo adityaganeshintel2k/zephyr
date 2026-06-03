@@ -178,9 +178,47 @@ SECTIONS {
   __rodata_region_end = .;
   __rodata_region_size = __rodata_region_end - __rodata_region_start;
 
-  .data : HDR_MPU_SEGMENT_ALIGN {
+#ifdef CONFIG_KERNEL_COHERENCE
+  /* This section is cached.  By default it contains only declared
+   * thread stacks, but applications can put symbols here too.
+   */
+  .cached : HDR_MPU_SEGMENT_ALIGN {
+     _cached_start = .;
+
+    *(.cached .cached.*)
+
+#ifdef CONFIG_USERSPACE
+    z_user_stacks_start = .;
+    *(.user_stacks .user_stacks.*)
+    z_user_stacks_end = .;
+#endif
+
+    MPU_SEGMENT_ALIGN
+
+    _cached_end = .;
+  } >ram
+#endif /* CONFIG_KERNEL_COHERENCE */
+
+  .noinit (NOLOAD) : HDR_MPU_SEGMENT_ALIGN {
     __data_start = .;
 
+    *(.noinit)
+    *(.noinit.*)
+
+#if defined(CONFIG_USERSPACE) && !defined(CONFIG_KERNEL_COHERENCE)
+    z_user_stacks_start = .;
+    *(.user_stacks .user_stacks.*)
+    z_user_stacks_end = .;
+#endif /* CONFIG_USERSPACE && !CONFIG_KERNEL_COHERENCE */
+
+/* Located in generated directory. This file is populated by the
+ * zephyr_linker_sources() CMake function.
+ */
+#include <snippets-noinit.ld>
+
+  } >ram
+
+  .data : HDR_MPU_SEGMENT_ALIGN {
     /* FIXME: previous ACE versions put some boot code in IMR.
      * Since memory mapping has changed. Place those here for now...
      * ... so we can boot the system.
@@ -208,8 +246,6 @@ SECTIONS {
 
     __data_end = .;
   } >ram
-
-#include <zephyr/linker/common-noinit.ld>
 
 #include <snippets-ram-sections.ld>
 
