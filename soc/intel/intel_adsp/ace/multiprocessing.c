@@ -38,17 +38,28 @@
 #define IPI_TLB_FLUSH 0x01
 #endif
 
+#ifdef CONFIG_XTENSA_MPU
+#define IPI_MPU_MAP_RELOAD 0x01
+#endif
+
 static void ipc_isr(void *arg)
 {
 	uint32_t cpu_id = arch_proc_id();
 
-#if defined(CONFIG_XTENSA_MMU) && (CONFIG_MP_MAX_NUM_CPUS > 1)
+#if (CONFIG_MP_MAX_NUM_CPUS > 1) && (defined(CONFIG_XTENSA_MMU) || defined(CONFIG_XTENSA_MPU))
 	uint32_t msg = IDC[cpu_id].agents[0].ipc.tdr & ~INTEL_ADSP_IPC_BUSY;
 
+#if defined(CONFIG_XTENSA_MMU)
 	if (msg == IPI_TLB_FLUSH) {
 		xtensa_mmu_tlb_shootdown();
 	}
 #endif
+#if defined(CONFIG_XTENSA_MPU)
+	if (msg == IPI_MPU_MAP_RELOAD) {
+		xtensa_mpu_map_ipi_reload();
+	}
+#endif
+#endif /* (CONFIG_MP_MAX_NUM_CPUS > 1) && (CONFIG_XTENSA_MMU || CONFIG_XTENSA_MPU) */
 
 	/*
 	 * Clearing the BUSY bits in both TDR and TDA are needed to
@@ -233,12 +244,23 @@ static void send_ipi(uint32_t msg, uint32_t cpu_bitmap)
 	}
 }
 
-#if defined(CONFIG_XTENSA_MMU) && (CONFIG_MP_MAX_NUM_CPUS > 1)
+#if (CONFIG_MP_MAX_NUM_CPUS > 1)
+
+#if defined(CONFIG_XTENSA_MMU)
 void xtensa_mmu_tlb_ipi(void)
 {
 	send_ipi(IPI_TLB_FLUSH, IPI_ALL_CPUS_MASK);
 }
-#endif
+#endif /* CONFIG_XTENSA_MMU */
+
+#if defined(CONFIG_XTENSA_MPU)
+void xtensa_mpu_map_ipi(void)
+{
+	send_ipi(IPI_MPU_MAP_RELOAD, IPI_ALL_CPUS_MASK);
+}
+#endif /* CONFIG_XTENSA_MPU */
+
+#endif /* CONFIG_MP_MAX_NUM_CPUS > 1 */
 
 void arch_sched_broadcast_ipi(void)
 {
