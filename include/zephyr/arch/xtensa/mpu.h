@@ -353,6 +353,25 @@ void xtensa_mpu_init(void);
 void xtensa_mpu_reinit(void);
 
 /**
+ * @brief Tell other processors to reload MPU map.
+ *
+ * This sends IPI to other processors to telling them to reload MPU map.
+ * This is needed when one processor is updating MPU map that may affect
+ * threads running on other processors.
+ *
+ * @note This needs to be implemented in the SoC layer.
+ */
+void xtensa_mpu_map_ipi(void);
+
+/**
+ * @brief Reload MPU map due to reload IPI.
+ *
+ * This reloads MPU map due to request via IPI. This is because the MPU map
+ * may have been modified by other processors.
+ */
+void xtensa_mpu_map_ipi_reload(void);
+
+/**
  * @}
  */
 

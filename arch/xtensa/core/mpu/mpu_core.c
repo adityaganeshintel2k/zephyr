@@ -547,6 +547,10 @@ end:
 
 	ret = 0;
 
+#if CONFIG_MP_MAX_NUM_CPUS > 1
+	xtensa_mpu_map_ipi();
+#endif
+
 out:
 	return ret;
 }
@@ -678,6 +682,37 @@ void xtensa_mpu_reinit(void)
 				 : : "a"(map->entries[entry].at), "a"(map->entries[entry].as));
 	}
 }
+
+/* This should be implemented in the SoC layer.
+ * This weak version is here to avoid build errors.
+ */
+void __weak xtensa_mpu_map_ipi(void)
+{
+}
+
+void xtensa_mpu_map_ipi_reload(void)
+{
+	unsigned int key;
+
+	/* Need to lock interrupts to prevent any context
+	 * switching until all the page tables are updated.
+	 * Or else we would be switching to another thread
+	 * and running that with incorrect page tables
+	 * which would result in permission issues.
+	 */
+	key = arch_irq_lock();
+
+#ifdef CONFIG_USERSPACE
+	struct k_thread *thread = _current_cpu->current;
+
+	xtensa_mpu_thread_map_write(thread);
+#else
+	mpu_map_write(&xtensa_mpu_map_fg_kernel);
+#endif /* CONFIG_USERSPACE */
+
+	arch_irq_unlock(key);
+}
+
 
 #ifdef CONFIG_USERSPACE
 /**
@@ -931,6 +966,18 @@ int arch_mem_domain_thread_add(struct k_thread *thread)
 	if (thread == _current_cpu->current) {
 		xtensa_mpu_thread_map_write(thread);
 	}
+
+#if CONFIG_MP_MAX_NUM_CPUS > 1
+	/* Need to tell other CPUs to switch to the new page table
+	 * in case the thread is running on one of them.
+	 *
+	 * Note that there is no need to send TLB IPI if this is
+	 * migration as it was sent above during reset_region().
+	 */
+	if ((thread != _current_cpu->current) && !is_migration) {
+		xtensa_mpu_map_ipi();
+	}
+#endif
 
 	return ret;
 }
