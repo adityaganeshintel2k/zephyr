@@ -278,6 +278,20 @@ config XTENSA_MPU
 	help
 	  Enable support for Xtensa Memory Protection Unit.
 
+if XTENSA_MPU
+
+config XTENSA_MPU_MAP_WORK_ON_COPY
+	bool "Work on copy of MPU map"
+	default y
+	help
+	  When manipulating the MPU map, only work on the copy of the map
+	  instead of working directly on the MPU map. Only after the work
+	  has succeeded then the map copied back to the main map.
+
+	  Default is enabled. Disable if desired.
+
+endif # XTENSA_MPU
+
 endif # CPU_HAS_MPU
 
 config XTENSA_SYSCALL_USE_HELPER

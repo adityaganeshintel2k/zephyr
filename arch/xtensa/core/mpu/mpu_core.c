@@ -354,7 +354,13 @@ static int mpu_map_region_add(struct xtensa_mpu_map *map,
 	struct xtensa_mpu_entry *entry_slot_s, *entry_slot_e = NULL;
 	int key;
 
-	struct xtensa_mpu_entry *entries = map->entries;
+	struct xtensa_mpu_entry *entries;
+
+#ifdef CONFIG_XTENSA_MPU_MAP_WORK_ON_COPY
+	entries = map->wip_entries;
+#else
+	entries = map->entries;
+#endif /* CONFIG_XTENSA_MPU_MAP_WORK_ON_COPY */
 
 	key = mpu_map_lock(map);
 
@@ -362,6 +368,11 @@ static int mpu_map_region_add(struct xtensa_mpu_map *map,
 		ret = -EINVAL;
 		goto out;
 	}
+
+#ifdef CONFIG_XTENSA_MPU_MAP_WORK_ON_COPY
+	/* Make a copy and work on the copy only. */
+	memcpy(map->wip_entries, map->entries, sizeof(map->entries));
+#endif /* CONFIG_XTENSA_MPU_MAP_WORK_ON_COPY */
 
 	memory_type = find_memory_type(start_addr, end_addr);
 
@@ -591,6 +602,11 @@ end:
 
 	ret = 0;
 
+#ifdef CONFIG_XTENSA_MPU_MAP_WORK_ON_COPY
+	/* Region addition was successful, copy it back to the main entry set. */
+	memcpy(map->entries, map->wip_entries, sizeof(map->entries));
+#endif /* CONFIG_XTENSA_MPU_MAP_WORK_ON_COPY */
+
 #if CONFIG_MP_MAX_NUM_CPUS > 1
 	xtensa_mpu_map_ipi();
 #endif
@@ -683,6 +699,10 @@ void xtensa_mpu_init(void)
 		ent.at.p.memory_type = XTENSA_MPU_DEFAULT_MEMORY_TYPE;
 
 		xtensa_mpu_map_fg_kernel.entries[entry] = ent;
+
+#ifdef CONFIG_XTENSA_MPU_MAP_WORK_ON_COPY
+		xtensa_mpu_map_fg_kernel.wip_entries[entry] = ent;
+#endif /* CONFIG_XTENSA_MPU_MAP_WORK_ON_COPY */
 	}
 
 	/*

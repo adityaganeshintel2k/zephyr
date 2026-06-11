@@ -190,6 +190,15 @@ struct xtensa_mpu_map {
 	 */
 	struct xtensa_mpu_entry entries[XTENSA_MPU_NUM_ENTRIES];
 
+#ifdef CONFIG_XTENSA_MPU_MAP_WORK_ON_COPY
+
+	/**
+	 * Array of work-in-progress MPU entries.
+	 */
+	struct xtensa_mpu_entry wip_entries[XTENSA_MPU_NUM_ENTRIES];
+
+#endif /* CONFIG_XTENSA_MPU_MAP_WORK_ON_COPY */
+
 	atomic_t locked;
 };
 
