@@ -31,3 +31,15 @@ check_set_compiler_property(APPEND PROPERTY warning_extended
 
 # Do not fuse instructions via FLIX
 set_compiler_property(PROPERTY no_generate_vliw -mno-generate-flix)
+
+# Sync the above with clang/compiler_flags.cmake
+check_set_compiler_property(PROPERTY warning_extended
+                            -Wno-self-assign
+                            -Wno-initializer-overrides
+                            -Wno-section
+                            -Wno-gnu
+                            # xt-clang complains about comparisons like (unsigned int == -1).
+                            # But it is valid as it is like '== UINTMAX'. So disable
+                            # the warning.
+                            -Wno-tautological-constant-out-of-range-compare
+)
