@@ -173,7 +173,8 @@ struct dai_intel_dmic {
 	/* hardware parameters */
 	uint32_t reg_base;
 	uint32_t shim_base;
-#if defined(CONFIG_SOC_ACE20_LNL) || defined(CONFIG_SOC_ACE30) || defined(CONFIG_SOC_ACE40)
+#if defined(CONFIG_SOC_ACE20_LNL) || defined(CONFIG_SOC_ACE30) || defined(CONFIG_SOC_ACE40) || \
+	defined(CONFIG_SOC_ACE50)
 	uint32_t hdamldmic_base;
 	uint32_t vshim_base;
 #endif
