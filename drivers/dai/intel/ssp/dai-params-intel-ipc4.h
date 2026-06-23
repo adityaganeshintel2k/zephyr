@@ -270,7 +270,7 @@ struct dai_intel_ipc4_ssp_mclk_config_2 {
 } __packed;
 
 struct dai_intel_ipc4_ssp_driver_config {
-#if defined(CONFIG_SOC_ACE30) || defined(CONFIG_SOC_ACE40)
+#if defined(CONFIG_SOC_ACE30) || defined(CONFIG_SOC_ACE40) || defined(CONFIG_SOC_ACE50)
 	struct dai_intel_ipc4_ssp_config_ver_3_0 i2s_config;
 #else
 	struct dai_intel_ipc4_ssp_config i2s_config;

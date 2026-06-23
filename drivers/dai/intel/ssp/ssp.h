@@ -12,6 +12,7 @@
 #define SSP_IP_VER_2_0 0x20000 /* ACE20 */
 #define SSP_IP_VER_3_0 0x30000 /* ACE30 */
 #define SSP_IP_VER_4_0 0x40000 /* ACE40 */
+#define SSP_IP_VER_5_0 0x50000 /* ACE50 */
 
 /* SSP IP version defined by CONFIG_SOC*/
 #if defined(CONFIG_SOC_SERIES_INTEL_ADSP_CAVS)
@@ -24,6 +25,8 @@
 #define SSP_IP_VER SSP_IP_VER_3_0
 #elif defined(CONFIG_SOC_ACE40)
 #define SSP_IP_VER SSP_IP_VER_4_0
+#elif defined(CONFIG_SOC_ACE50)
+#define SSP_IP_VER SSP_IP_VER_5_0
 #else
 #error "Unknown SSP IP"
 #endif
@@ -72,7 +75,7 @@
 #include "ssp_regs_v1.h"
 #elif defined(CONFIG_SOC_ACE20_LNL)
 #include "ssp_regs_v2.h"
-#elif defined(CONFIG_SOC_ACE30) || defined(CONFIG_SOC_ACE40)
+#elif defined(CONFIG_SOC_ACE30) || defined(CONFIG_SOC_ACE40) || defined(CONFIG_SOC_ACE50)
 #include "ssp_regs_v3.h"
 #else
 #error "Missing ssp definitions"
