@@ -9,10 +9,10 @@ configdefault SMP
 config POWER_DOMAIN
 	default y
 
-config INTEL_ADSP_CACHED_REGION
+configdefault INTEL_ADSP_CACHED_REGION
 	default 5
 
-config INTEL_ADSP_UNCACHED_REGION
+configdefault INTEL_ADSP_UNCACHED_REGION
 	default 2
 
 # Parameters for gen_isr_tables.py:
