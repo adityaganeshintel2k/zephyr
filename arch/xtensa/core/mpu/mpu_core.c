@@ -613,6 +613,8 @@ static inline void mpu_map_write(struct xtensa_mpu_map *map)
 
 	key = mpu_map_lock(map);
 
+	__asm__ volatile("memw; rsync" : : : "memory");
+
 	/*
 	 * Clear MPU entries first, then write MPU entries in reverse order.
 	 *
@@ -631,6 +633,8 @@ static inline void mpu_map_write(struct xtensa_mpu_map *map)
 		__asm__ volatile("wptlb %0, %1\n\t"
 				 : : "a"(map->entries[entry].at), "a"(map->entries[entry].as));
 	}
+
+	__asm__ volatile("rsync" : : : "memory");
 
 	mpu_map_unlock(map, key);
 }
