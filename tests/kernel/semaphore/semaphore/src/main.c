@@ -97,11 +97,17 @@ struct k_thread tdata;
 
 void sem_give_task(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
 	k_sem_give((struct k_sem *)p1);
 }
 
 void sem_reset_take_task(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
 	k_sem_reset((struct k_sem *)p1);
 	zassert_false(k_sem_take((struct k_sem *)p1, K_FOREVER));
 }
@@ -147,17 +153,28 @@ void isr_sem_take(const void *semaphore)
 
 void sem_take_timeout_forever_helper(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
 	k_sleep(K_MSEC(100));
 	k_sem_give(&simple_sem);
 }
 
 void sem_take_timeout_isr_helper(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
 	sem_give_from_isr(&simple_sem);
 }
 
 void sem_take_multiple_low_prio_helper(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+	
 	expect_k_sem_take_nomsg(&low_prio_sem, K_FOREVER, 0);
 	expect_k_sem_take_nomsg(&multiple_thread_sem, K_FOREVER, 0);
 
@@ -166,6 +183,9 @@ void sem_take_multiple_low_prio_helper(void *p1, void *p2, void *p3)
 
 void sem_take_multiple_mid_prio_helper(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
 	expect_k_sem_take_nomsg(&mid_prio_sem, K_FOREVER, 0);
 	expect_k_sem_take_nomsg(&multiple_thread_sem, K_FOREVER, 0);
 
@@ -174,6 +194,9 @@ void sem_take_multiple_mid_prio_helper(void *p1, void *p2, void *p3)
 
 void sem_take_multiple_high_prio_helper(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
 
 	expect_k_sem_take_nomsg(&high_prio_sem, K_FOREVER, 0);
 	expect_k_sem_take_nomsg(&multiple_thread_sem, K_FOREVER, 0);
@@ -184,6 +207,9 @@ void sem_take_multiple_high_prio_helper(void *p1, void *p2, void *p3)
 /* First function for mutual exclusion test */
 void sem_queue_mutual_exclusion1(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
 	for (int i = 0; i < 1000; i++) {
 		expect_k_sem_take_nomsg(&mut_sem, K_FOREVER, 0);
 
@@ -203,6 +229,9 @@ void sem_queue_mutual_exclusion1(void *p1, void *p2, void *p3)
 /* Second function for mutual exclusion test */
 void sem_queue_mutual_exclusion2(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
 	for (int i = 0; i < 1000; i++) {
 		expect_k_sem_take_nomsg(&mut_sem, K_FOREVER, 0);
 
@@ -221,6 +250,9 @@ void sem_queue_mutual_exclusion2(void *p1, void *p2, void *p3)
 
 void sem_take_multiple_high_prio_long_helper(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
 	expect_k_sem_take_nomsg(&high_prio_long_sem, K_FOREVER, 0);
 	expect_k_sem_take_nomsg(&multiple_thread_sem, K_FOREVER, 0);
 
@@ -996,6 +1028,9 @@ ZTEST(semaphore, test_sem_give_take_from_isr)
 
 void sem_multiple_threads_wait_helper(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
 	/* get blocked until the test thread gives the semaphore */
 	expect_k_sem_take_nomsg(&multiple_thread_sem, K_FOREVER, 0);
 
@@ -1135,6 +1170,11 @@ ZTEST(semaphore, test_sem_measure_timeouts)
 
 void sem_measure_timeout_from_thread_helper(void *p1, void *p2, void *p3)
 {
+
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
 	/* first sync the 2 threads */
 	k_sem_give(&simple_sem);
 
@@ -1198,6 +1238,8 @@ ZTEST(semaphore, test_sem_measure_timeout_from_thread)
 
 void sem_multiple_take_and_timeouts_helper(void *p1, void *p2, void *p3)
 {
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
 	int timeout = POINTER_TO_INT(p1);
 	int64_t start_ticks, end_ticks, diff_ticks;
 
@@ -1275,6 +1317,9 @@ ZTEST(semaphore_1cpu, test_sem_multiple_take_and_timeouts)
 
 void sem_multi_take_timeout_diff_sem_helper(void *p1, void *p2, void *p3)
 {
+
+	ARG_UNUSED(p3);
+
 	int rc;
 	int timeout = POINTER_TO_INT(p1);
 	struct k_sem *sema = p2;
