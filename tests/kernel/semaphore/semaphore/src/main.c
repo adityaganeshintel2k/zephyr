@@ -515,7 +515,7 @@ ZTEST_USER(semaphore, test_sem_count_get)
 	expect_k_sem_count_get_nomsg(&msg_sema, SEM_INIT_VAL + 1);
 	expect_k_sem_take_nomsg(&msg_sema, K_FOREVER, 0);
 	/**TESTPOINT: sem count get after take*/
-	for (int i = 0; i < SEM_MAX_VAL; i++) {
+	for (unsigned int i = 0; i < SEM_MAX_VAL; i++) {
 		expect_k_sem_count_get_nomsg(&msg_sema, SEM_INIT_VAL + i);
 		k_sem_give(&msg_sema);
 	}
@@ -952,7 +952,7 @@ ZTEST_USER(semaphore, test_k_sem_correct_count_limit)
 	/* Give the semaphore by a thread and verify the semaphore's
 	 * count is as expected
 	 */
-	for (int i = 1; i <= SEM_MAX_VAL; i++) {
+	for (unsigned int i = 1; i <= SEM_MAX_VAL; i++) {
 		k_sem_give(&simple_sem);
 		expect_k_sem_count_get_nomsg(&simple_sem, i);
 	}
@@ -961,7 +961,7 @@ ZTEST_USER(semaphore, test_k_sem_correct_count_limit)
 	 * continue to run k_sem_give,
 	 * the count of simple_sem will not increase anymore
 	 */
-	for (int i = 0; i < 5; i++) {
+	for (unsigned int i = 0; i < 5; i++) {
 		k_sem_give(&simple_sem);
 		expect_k_sem_count_get_nomsg(&simple_sem, SEM_MAX_VAL);
 	}
@@ -1009,7 +1009,7 @@ ZTEST(semaphore, test_sem_give_take_from_isr)
 	expect_k_sem_count_get_nomsg(&simple_sem, 0U);
 
 	/* give semaphore from an isr and do a check for the count */
-	for (int i = 0; i < SEM_MAX_VAL; i++) {
+	for (unsigned int i = 0; i < SEM_MAX_VAL; i++) {
 		sem_give_from_isr(&simple_sem);
 		expect_k_sem_count_get_nomsg(&simple_sem, i + 1);
 	}
