@@ -1069,7 +1069,7 @@ ZTEST(semaphore, test_sem_multiple_threads_wait)
 	 * correctly by running twice.
 	 */
 	for (int repeat_count = 0; repeat_count < 2; repeat_count++) {
-		for (int i = 0; i < TOTAL_THREADS_WAITING; i++) {
+		for (unsigned int i = 0U; i < TOTAL_THREADS_WAITING; i++) {
 			k_thread_create(&multiple_tid[i],
 					multiple_stack[i], STACK_SIZE,
 					sem_multiple_threads_wait_helper,
@@ -1082,7 +1082,7 @@ ZTEST(semaphore, test_sem_multiple_threads_wait)
 		k_sleep(K_MSEC(500));
 
 		/* give the semaphores */
-		for (int i = 0; i < TOTAL_THREADS_WAITING; i++) {
+		for (unsigned int i = 0U; i < TOTAL_THREADS_WAITING; i++) {
 			k_sem_give(&multiple_thread_sem);
 		}
 
@@ -1090,7 +1090,7 @@ ZTEST(semaphore, test_sem_multiple_threads_wait)
 		k_sleep(K_MSEC(500));
 
 		/* check if all the threads are done. */
-		for (int i = 0; i < TOTAL_THREADS_WAITING; i++) {
+		for (unsigned int i = 0U; i < TOTAL_THREADS_WAITING; i++) {
 			expect_k_sem_take(&simple_sem, K_FOREVER, 0,
 				"Some of the threads did not get multiple_thread_sem: %d != %d");
 		}
@@ -1098,7 +1098,7 @@ ZTEST(semaphore, test_sem_multiple_threads_wait)
 		expect_k_sem_count_get_nomsg(&simple_sem, 0U);
 		expect_k_sem_count_get_nomsg(&multiple_thread_sem, 0U);
 
-		for (int i = 0; i < TOTAL_THREADS_WAITING; i++) {
+		for (unsigned int i = 0U; i < TOTAL_THREADS_WAITING; i++) {
 			k_thread_join(&multiple_tid[i], K_FOREVER);
 		}
 	}
@@ -1294,7 +1294,7 @@ ZTEST(semaphore_1cpu, test_sem_multiple_take_and_timeouts)
 	/* Multiple threads timeout and the sequence in which it times out
 	 * is pushed into a pipe and checked later on.
 	 */
-	for (int i = 0; i < TOTAL_THREADS_WAITING; i++) {
+	for (unsigned int i = 0U; i < TOTAL_THREADS_WAITING; i++) {
 		k_thread_create(&multiple_tid[i],
 				multiple_stack[i], STACK_SIZE,
 				sem_multiple_take_and_timeouts_helper,
@@ -1302,7 +1302,7 @@ ZTEST(semaphore_1cpu, test_sem_multiple_take_and_timeouts)
 				K_PRIO_PREEMPT(1), 0, K_NO_WAIT);
 	}
 
-	for (int i = 0; i < TOTAL_THREADS_WAITING; i++) {
+	for (unsigned int i = 0U; i < TOTAL_THREADS_WAITING; i++) {
 		k_pipe_read(&timeout_info_pipe, (uint8_t *)&timeout, sizeof(int), K_FOREVER);
 		zassert_equal(timeout, QSEC2MS(i + 1),
 			     "timeout did not occur properly: %d != %d",
@@ -1310,7 +1310,7 @@ ZTEST(semaphore_1cpu, test_sem_multiple_take_and_timeouts)
 	}
 
 	/* cleanup */
-	for (int i = 0; i < TOTAL_THREADS_WAITING; i++) {
+	for (unsigned int i = 0U; i < TOTAL_THREADS_WAITING; i++) {
 		k_thread_join(&multiple_tid[i], K_FOREVER);
 	}
 }
