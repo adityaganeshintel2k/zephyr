@@ -144,7 +144,7 @@ static const struct z_exc_handle exceptions[] = {Z_EXC_HANDLE(z_arm_user_string_
  *
  * @return true if error is recoverable, otherwise return false.
  */
-static bool memory_fault_recoverable(struct arch_esf *esf, bool synchronous)
+static bool memory_fault_recoverable(struct arch_esf *esf __maybe_unused, bool synchronous __maybe_unused)
 {
 #ifdef CONFIG_USERSPACE
 	for (int i = 0; i < ARRAY_SIZE(exceptions); i++) {
@@ -500,6 +500,9 @@ static int bus_fault(struct arch_esf *esf, int from_hard_fault, bool *recoverabl
  */
 static uint32_t usage_fault(const struct arch_esf *esf)
 {
+
+	ARG_UNUSED(esf);
+
 	uint32_t reason = K_ERR_ARM_USAGE_GENERIC;
 
 	PR_FAULT_INFO("***** USAGE FAULT *****");
@@ -638,6 +641,7 @@ static void debug_monitor(struct arch_esf *esf, bool *recoverable)
 	}
 
 #endif
+	ARG_UNUSED(esf);
 }
 
 #else

@@ -40,6 +40,8 @@ void z_arm_save_fp_context(struct fpu_ctx_full *buffer)
 		 */
 	}
 #endif
+
+ARG_UNUSED(buffer);
 }
 
 void z_arm_restore_fp_context(const struct fpu_ctx_full *buffer)
@@ -60,4 +62,7 @@ void z_arm_restore_fp_context(const struct fpu_ctx_full *buffer)
 				 :);
 	}
 #endif
+
+ARG_UNUSED(buffer);
+
 }
