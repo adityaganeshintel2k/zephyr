@@ -66,7 +66,10 @@ static inline uint32_t flags_get(const uint32_t *flagp)
 static struct k_spinlock work_lock;
 
 /* Invoked by work thread */
-static void handle_flush(struct k_work *work) { }
+static void handle_flush(struct k_work *work) 
+{
+	ARG_UNUSED(work);
+}
 
 static inline void init_flusher(struct z_work_flusher *flusher)
 {
