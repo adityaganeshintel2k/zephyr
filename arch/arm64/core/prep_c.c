@@ -22,7 +22,10 @@
 #include "boot.h"
 #include "kernel_arch_func.h"
 
-__weak void z_arm64_mm_init(bool is_primary_core) { }
+__weak void z_arm64_mm_init(bool is_primary_core) 
+{
+	ARG_UNUSED(is_primary_core);
+}
 
 /**
  *

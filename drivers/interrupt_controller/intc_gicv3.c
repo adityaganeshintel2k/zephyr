@@ -763,6 +763,8 @@ static void __arm_gic_init(void)
 
 int arm_gic_init(const struct device *dev)
 {
+	ARG_UNUSED(dev);
+
 	gicv3_dist_init();
 
 	__arm_gic_init();

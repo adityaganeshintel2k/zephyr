@@ -91,11 +91,14 @@ struct pl011_data {
 #if DT_HAS_COMPAT_STATUS_OKAY(arm_pl011)
 static inline int pwr_on_arm_pl011(const struct device *dev)
 {
+	ARG_UNUSED(dev);
 	return 0;
 }
 
 static inline int clk_enable_arm_pl011(const struct device *dev, uint32_t clk)
 {
+	ARG_UNUSED(dev);
+	ARG_UNUSED(clk);
 	return 0;
 }
 #endif
