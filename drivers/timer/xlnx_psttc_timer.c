@@ -116,6 +116,8 @@ void sys_clock_set_timeout(uint32_t ticks, bool idle)
 	/* Set match value for the next interrupt */
 	update_match(cycles, next_cycles);
 #endif
+	ARG_UNUSED(ticks);
+	ARG_UNUSED(idle);
 }
 
 uint32_t sys_clock_elapsed(void)
