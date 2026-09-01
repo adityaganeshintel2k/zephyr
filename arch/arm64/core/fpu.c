@@ -87,8 +87,16 @@ static void DBG_PC(char *msg, uintptr_t pc)
 
 #else
 
-static inline void DBG(char *msg, struct k_thread *t) { }
-static inline void DBG_PC(char *msg, uintptr_t pc) { }
+static inline void DBG(char *msg, struct k_thread *t)
+{
+	ARG_UNUSED(msg);
+	ARG_UNUSED(t);
+}
+static inline void DBG_PC(char *msg, uintptr_t pc)
+{
+	ARG_UNUSED(msg);
+	ARG_UNUSED(pc);
+}
 
 #endif /* FPU_DEBUG */
 

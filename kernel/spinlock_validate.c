@@ -131,7 +131,7 @@ struct k_spinlock *z_spin_get_held_lock(void)
  * section — i.e. breaking the lock of someone higher up the call stack,
  * which is forbidden.
  */
-void z_assert_can_swap(unsigned int key, struct k_spinlock *swap_lock)
+void z_assert_can_swap(unsigned int key __maybe_unused, struct k_spinlock *swap_lock)
 {
 	uint8_t cpu_id = _current_cpu->id;
 	struct k_spinlock *held = z_spin_get_held_lock_locked(cpu_id);

@@ -66,6 +66,7 @@ static inline void z_sched_switch_spin(struct k_thread *thread)
 	 */
 	barrier_dmem_fence_full();
 #endif /* CONFIG_SMP */
+	ARG_UNUSED(thread);
 }
 
 /* New style context switching.  arch_switch() is a lower level

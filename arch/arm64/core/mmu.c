@@ -261,7 +261,11 @@ static void debug_show_pte(uint64_t *pte, unsigned int level)
 	MMU_DEBUG("\n");
 }
 #else
-static inline void debug_show_pte(uint64_t *pte, unsigned int level) { }
+static inline void debug_show_pte(uint64_t *pte, unsigned int level)
+{
+	ARG_UNUSED(pte);
+	ARG_UNUSED(level);
+}
 #endif
 
 static void set_pte_table_desc(uint64_t *pte, uint64_t *table, unsigned int level)
@@ -551,7 +555,7 @@ static int privatize_table(uint64_t *dst_table, uint64_t *src_table,
 static int privatize_page_range(struct arm_mmu_ptables *dst_pt,
 				struct arm_mmu_ptables *src_pt,
 				uintptr_t virt_start, size_t size,
-				const char *name)
+				const char *name __maybe_unused)
 {
 	k_spinlock_key_t key;
 	int ret;
@@ -718,7 +722,7 @@ static int globalize_table(uint64_t *dst_table, uint64_t *src_table, uintptr_t v
  * synchronized; if false, private entries are reverted to the global ones.
  */
 static int globalize_page_range(struct arm_mmu_ptables *dst_pt, struct arm_mmu_ptables *src_pt,
-				uintptr_t virt_start, size_t size, const char *name,
+				uintptr_t virt_start, size_t size, const char *name __maybe_unused,
 				bool preserve_private)
 {
 	k_spinlock_key_t key;
@@ -827,7 +831,7 @@ static uint64_t get_region_desc(uint32_t attrs)
 	return desc;
 }
 
-static int __add_map(struct arm_mmu_ptables *ptables, const char *name,
+static int __add_map(struct arm_mmu_ptables *ptables, const char *name __maybe_unused,
 		     uintptr_t phys, uintptr_t virt, size_t size, uint32_t attrs)
 {
 	uint64_t desc = get_region_desc(attrs);
@@ -854,7 +858,7 @@ static int add_map(struct arm_mmu_ptables *ptables, const char *name,
 	return ret;
 }
 
-static void remove_map(struct arm_mmu_ptables *ptables, const char *name,
+static void remove_map(struct arm_mmu_ptables *ptables, const char *name __maybe_unused,
 		       uintptr_t virt, size_t size)
 {
 	k_spinlock_key_t key;
