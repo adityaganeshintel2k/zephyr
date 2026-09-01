@@ -49,6 +49,7 @@ static ALWAYS_INLINE bool arch_is_in_isr(void)
 
 static ALWAYS_INLINE bool arch_is_in_nested_exception(const struct arch_esf *esf)
 {
+	ARG_UNUSED(esf);
 	return (_current_cpu->arch.exc_depth > 1U) ? (true) : (false);
 }
 
@@ -59,7 +60,10 @@ static ALWAYS_INLINE bool arch_is_in_nested_exception(const struct arch_esf *esf
  * @param exc_return EXC_RETURN value present in LR after exception entry.
  */
 static ALWAYS_INLINE void z_arm_set_fault_sp(const struct arch_esf *esf, uint32_t exc_return)
-{}
+{
+	ARG_UNUSED(esf);
+	ARG_UNUSED(exc_return);
+}
 
 #if defined(CONFIG_USERSPACE)
 /*
