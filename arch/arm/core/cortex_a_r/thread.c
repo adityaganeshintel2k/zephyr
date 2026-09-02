@@ -78,7 +78,7 @@ static void setup_priv_stack(struct k_thread *thread)
  * addresses, we have to unset it manually before storing it in the 'pc' field
  * of the ESF.
  */
-void arch_new_thread(struct k_thread *thread, k_thread_stack_t *stack,
+void arch_new_thread(struct k_thread *thread, k_thread_stack_t *stack __maybe_unused,
 		     char *stack_ptr, k_thread_entry_t entry,
 		     void *p1, void *p2, void *p3)
 {

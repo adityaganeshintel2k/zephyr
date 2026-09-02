@@ -228,6 +228,7 @@ static void xlnx_ps_enable_uart(uintptr_t reg_base)
  */
 static void set_baudrate(const struct device *dev, uint32_t baud_rate)
 {
+	ARG_UNUSED(baud_rate);	
 	const struct uart_xlnx_ps_dev_config *dev_cfg = dev->config;
 	uint32_t baud = dev_cfg->baud_rate;
 	uint32_t clk_freq = dev_cfg->sys_clk_freq;

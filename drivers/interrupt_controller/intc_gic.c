@@ -361,6 +361,7 @@ static void gic_cpu_init(void)
  */
 int arm_gic_init(const struct device *dev)
 {
+	ARG_UNUSED(dev);
 	/* Init of Distributor interface registers */
 	gic_dist_init();
 
