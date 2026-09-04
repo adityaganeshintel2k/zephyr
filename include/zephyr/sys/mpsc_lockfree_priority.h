@@ -6,7 +6,6 @@
  * @brief Priority-aware lock-free multiple-producer, single-consumer queue.
  */
 
-#include <stddef.h>
 #include <zephyr/sys/mpsc_lockfree.h>
 
 #ifdef __cplusplus
@@ -21,7 +20,7 @@ extern "C" {
  */
 struct mpsc_priority {
 	struct mpsc *queues;
-	size_t num_priorities;
+	uint8_t num_priorities;
 };
 
 /**
@@ -32,7 +31,7 @@ struct mpsc_priority {
  * @param num_priorities Number of elements in @p queues
  */
 static inline void mpsc_priority_init(struct mpsc_priority *q, struct mpsc *queues,
-				      size_t num_priorities)
+				      uint8_t num_priorities)
 {
 	__ASSERT_NO_MSG(q != NULL);
 	__ASSERT_NO_MSG(queues != NULL);
@@ -41,7 +40,7 @@ static inline void mpsc_priority_init(struct mpsc_priority *q, struct mpsc *queu
 	q->queues = queues;
 	q->num_priorities = num_priorities;
 
-	for (size_t priority = 0U; priority < num_priorities; priority++) {
+	for (uint8_t priority = 0U; priority < num_priorities; priority++) {
 		mpsc_init(&queues[priority]);
 	}
 }
@@ -54,7 +53,7 @@ static inline void mpsc_priority_init(struct mpsc_priority *q, struct mpsc *queu
  * @param priority Node priority, where 0 is the highest priority
  */
 static ALWAYS_INLINE void mpsc_priority_push(struct mpsc_priority *q, struct mpsc_node *node,
-					     size_t priority)
+					     uint8_t priority)
 {
 	__ASSERT_NO_MSG(q != NULL);
 	__ASSERT_NO_MSG(node != NULL);
@@ -79,7 +78,7 @@ static inline struct mpsc_node *mpsc_priority_pop(struct mpsc_priority *q)
 {
 	__ASSERT_NO_MSG(q != NULL);
 
-	for (size_t priority = 0U; priority < q->num_priorities; priority++) {
+	for (uint8_t priority = 0U; priority < q->num_priorities; priority++) {
 		struct mpsc_node *node = mpsc_pop(&q->queues[priority]);
 
 		if (node != NULL) {
