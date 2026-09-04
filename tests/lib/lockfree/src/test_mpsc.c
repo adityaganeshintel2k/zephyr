@@ -9,6 +9,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util_loops.h>
 #include <zephyr/timing/timing.h>
+#include <zephyr/sys/dlist.h>
 #include <zephyr/sys/spsc_lockfree.h>
 #include <zephyr/sys/mpsc_lockfree.h>
 #include <zephyr/sys/mpsc_lockfree_priority.h>
@@ -127,6 +128,10 @@ static K_THREAD_STACK_ARRAY_DEFINE(mpsc_stack, MPSC_THREADS_NUM, MPSC_STACK_SIZE
 struct test_mpsc_node {
 	uint32_t id;
 	struct mpsc_node n;
+	struct mpsc_node mpsc_node;
+	sys_dnode_t dlist_node;
+	uint8_t priority;
+	uint8_t owner;
 };
 
 
@@ -242,6 +247,247 @@ ZTEST(mpsc, test_mpsc_threaded)
 }
 
 #define THROUGHPUT_ITERS 100000
+
+#ifndef MPSC_PRIORITY_BENCHMARK
+#define MPSC_PRIORITY_BENCHMARK 1
+#endif
+
+#ifndef MPSC_BENCHMARK_ITERATIONS
+#define MPSC_BENCHMARK_ITERATIONS 100000
+#endif
+
+#ifndef MPSC_BENCHMARK_PRODUCERS
+#define MPSC_BENCHMARK_PRODUCERS 3
+#endif
+
+#define MPSC_BENCHMARK_PRIORITIES 3
+#define MPSC_BENCHMARK_POOL_SIZE 8
+#define MPSC_BENCHMARK_STACK_SIZE (1024 + CONFIG_TEST_EXTRA_STACK_SIZE)
+
+#if MPSC_PRIORITY_BENCHMARK
+
+enum mpsc_benchmark_mode {
+	MPSC_BENCHMARK_PRIORITY,
+	MPSC_BENCHMARK_LOCKED,
+};
+
+struct mpsc_benchmark_node {
+	struct mpsc_node mpsc_node;
+	sys_dnode_t dlist_node;
+	uint8_t priority;
+	uint8_t owner;
+};
+
+struct mpsc_benchmark_producer_arg {
+	uint32_t id;
+	enum mpsc_benchmark_mode mode;
+};
+
+static struct mpsc_priority benchmark_priority_q;
+static struct mpsc benchmark_priority_queues[MPSC_BENCHMARK_PRIORITIES];
+static struct {
+	sys_dlist_t queues[MPSC_BENCHMARK_PRIORITIES];
+	struct k_spinlock lock;
+} benchmark_locked_q;
+
+static K_SEM_DEFINE(benchmark_start, 0, MPSC_BENCHMARK_PRODUCERS + 1);
+static struct k_thread benchmark_threads[MPSC_BENCHMARK_PRODUCERS + 1];
+static K_THREAD_STACK_ARRAY_DEFINE(benchmark_stacks, MPSC_BENCHMARK_PRODUCERS + 1,
+					   MPSC_BENCHMARK_STACK_SIZE);
+static struct mpsc_benchmark_producer_arg benchmark_args[MPSC_BENCHMARK_PRODUCERS];
+static uint64_t benchmark_push_cycles[MPSC_BENCHMARK_PRODUCERS];
+static uint64_t benchmark_pop_cycles;
+
+#define BENCHMARK_SPSC_DEFINE(id, _) \
+	SPSC_DEFINE(benchmark_free_q_##id, struct test_mpsc_node, MPSC_BENCHMARK_POOL_SIZE)
+#define BENCHMARK_SPSC_NAME(id, _) \
+	(struct spsc_node_sq *)&benchmark_free_q_##id
+
+LISTIFY(MPSC_BENCHMARK_PRODUCERS, BENCHMARK_SPSC_DEFINE, (;), MPSC_BENCHMARK_PRODUCERS)
+
+static struct spsc_node_sq *benchmark_free_q[MPSC_BENCHMARK_PRODUCERS] = {
+	LISTIFY(MPSC_BENCHMARK_PRODUCERS, BENCHMARK_SPSC_NAME, (,))
+};
+
+static void mpsc_benchmark_queue_init(enum mpsc_benchmark_mode mode)
+{
+	if (mode == MPSC_BENCHMARK_PRIORITY) {
+		mpsc_priority_init(&benchmark_priority_q, benchmark_priority_queues,
+				   MPSC_BENCHMARK_PRIORITIES);
+		return;
+	}
+
+	for (uint8_t priority = 0U; priority < MPSC_BENCHMARK_PRIORITIES; priority++) {
+		sys_dlist_init(&benchmark_locked_q.queues[priority]);
+	}
+}
+
+static void mpsc_benchmark_push(enum mpsc_benchmark_mode mode,
+				struct test_mpsc_node *node)
+{
+	if (mode == MPSC_BENCHMARK_PRIORITY) {
+		mpsc_priority_push(&benchmark_priority_q, &node->mpsc_node, node->priority);
+		return;
+	}
+
+	k_spinlock_key_t key = k_spin_lock(&benchmark_locked_q.lock);
+	sys_dlist_append(&benchmark_locked_q.queues[node->priority], &node->dlist_node);
+	k_spin_unlock(&benchmark_locked_q.lock, key);
+}
+
+static struct test_mpsc_node *mpsc_benchmark_pop(enum mpsc_benchmark_mode mode)
+{
+	if (mode == MPSC_BENCHMARK_PRIORITY) {
+		struct mpsc_node *node = mpsc_priority_pop(&benchmark_priority_q);
+
+		return node == NULL ? NULL : CONTAINER_OF(node, struct test_mpsc_node,
+								mpsc_node);
+	}
+
+	k_spinlock_key_t key = k_spin_lock(&benchmark_locked_q.lock);
+	struct test_mpsc_node *node = NULL;
+
+	for (uint8_t priority = 0U; priority < MPSC_BENCHMARK_PRIORITIES; priority++) {
+		sys_dnode_t *dnode = sys_dlist_peek_head(&benchmark_locked_q.queues[priority]);
+
+		if (dnode != NULL) {
+			sys_dlist_remove(dnode);
+			node = CONTAINER_OF(dnode, struct test_mpsc_node, dlist_node);
+			break;
+		}
+	}
+
+	k_spin_unlock(&benchmark_locked_q.lock, key);
+	return node;
+}
+
+static void mpsc_benchmark_producer(void *p1, void *p2, void *p3)
+{
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
+	struct mpsc_benchmark_producer_arg *arg = p1;
+
+	k_sem_take(&benchmark_start, K_FOREVER);
+
+	for (uint32_t i = 0U; i < MPSC_BENCHMARK_ITERATIONS; i++) {
+		struct test_mpsc_node *node;
+
+		do {
+			node = spsc_consume(benchmark_free_q[arg->id]);
+			if (node == NULL) {
+				k_yield();
+			}
+		} while (node == NULL);
+
+		spsc_release(benchmark_free_q[arg->id]);
+		node->priority = i % MPSC_BENCHMARK_PRIORITIES;
+
+		timing_t start = timing_counter_get();
+		mpsc_benchmark_push(arg->mode, node);
+		timing_t finish = timing_counter_get();
+		benchmark_push_cycles[arg->id] += timing_cycles_get(&start, &finish);
+	}
+}
+
+static void mpsc_benchmark_consumer(void *p1, void *p2, void *p3)
+{
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
+	enum mpsc_benchmark_mode mode = (enum mpsc_benchmark_mode)(uintptr_t)p1;
+
+	k_sem_take(&benchmark_start, K_FOREVER);
+
+	for (uint32_t i = 0U; i < MPSC_BENCHMARK_ITERATIONS * MPSC_BENCHMARK_PRODUCERS;
+	     i++) {
+		struct test_mpsc_node *node;
+
+		do {
+			timing_t start = timing_counter_get();
+			node = mpsc_benchmark_pop(mode);
+			timing_t finish = timing_counter_get();
+			benchmark_pop_cycles += timing_cycles_get(&start, &finish);
+			if (node == NULL) {
+				k_yield();
+			}
+		} while (node == NULL);
+
+		uint32_t owner = node->owner;
+
+		spsc_acquire(benchmark_free_q[owner]);
+		spsc_produce(benchmark_free_q[owner]);
+	}
+}
+
+static void mpsc_benchmark_run(enum mpsc_benchmark_mode mode)
+{
+	mpsc_benchmark_queue_init(mode);
+	benchmark_pop_cycles = 0U;
+
+	for (uint32_t i = 0U; i < MPSC_BENCHMARK_PRODUCERS; i++) {
+		benchmark_push_cycles[i] = 0U;
+		spsc_reset(benchmark_free_q[i]);
+		for (uint32_t j = 0U; j < MPSC_BENCHMARK_POOL_SIZE; j++) {
+			struct test_mpsc_node *node = spsc_acquire(benchmark_free_q[i]);
+
+			__ASSERT_NO_MSG(node != NULL);
+			node->owner = i;
+		}
+		spsc_produce_all(benchmark_free_q[i]);
+		benchmark_args[i] = (struct mpsc_benchmark_producer_arg) {
+			.id = i,
+			.mode = mode,
+		};
+	}
+
+	k_thread_create(&benchmark_threads[0], benchmark_stacks[0], MPSC_BENCHMARK_STACK_SIZE,
+			mpsc_benchmark_consumer, (void *)(uintptr_t)mode, NULL, NULL,
+			K_PRIO_PREEMPT(5), K_INHERIT_PERMS, K_NO_WAIT);
+
+	for (uint32_t i = 0U; i < MPSC_BENCHMARK_PRODUCERS; i++) {
+		k_thread_create(&benchmark_threads[i + 1], benchmark_stacks[i + 1],
+				MPSC_BENCHMARK_STACK_SIZE, mpsc_benchmark_producer,
+				&benchmark_args[i], NULL, NULL, K_PRIO_PREEMPT(5),
+				K_INHERIT_PERMS, K_NO_WAIT);
+	}
+
+	timing_start();
+	for (uint32_t i = 0U; i < MPSC_BENCHMARK_PRODUCERS + 1; i++) {
+		k_sem_give(&benchmark_start);
+	}
+
+	for (uint32_t i = 0U; i < MPSC_BENCHMARK_PRODUCERS + 1; i++) {
+		k_thread_join(&benchmark_threads[i], K_FOREVER);
+	}
+
+	uint64_t push_total = 0U;
+
+	for (uint32_t i = 0U; i < MPSC_BENCHMARK_PRODUCERS; i++) {
+		push_total += benchmark_push_cycles[i];
+	}
+
+	uint64_t push_ops = (uint64_t)MPSC_BENCHMARK_ITERATIONS * MPSC_BENCHMARK_PRODUCERS;
+	uint64_t pop_ops = push_ops;
+
+	TC_PRINT("priority_mpsc_%s: producers=%u iterations=%u push_avg=%llu cycles (%u ns) "
+		 "pop_avg=%llu cycles (%u ns)\n",
+		 mode == MPSC_BENCHMARK_PRIORITY ? "lockfree" : "locked",
+		 MPSC_BENCHMARK_PRODUCERS, MPSC_BENCHMARK_ITERATIONS,
+		 push_total / push_ops, (uint32_t)timing_cycles_to_ns(push_total / push_ops),
+		 benchmark_pop_cycles / pop_ops,
+		 (uint32_t)timing_cycles_to_ns(benchmark_pop_cycles / pop_ops));
+}
+
+ZTEST(mpsc, test_priority_benchmark)
+{
+	TC_PRINT("benchmark config: producers=%u iterations=%u\n",
+		 MPSC_BENCHMARK_PRODUCERS, MPSC_BENCHMARK_ITERATIONS);
+	mpsc_benchmark_run(MPSC_BENCHMARK_PRIORITY);
+	mpsc_benchmark_run(MPSC_BENCHMARK_LOCKED);
+}
+
+#endif /* MPSC_PRIORITY_BENCHMARK */
 
 ZTEST(mpsc, test_mpsc_throughput)
 {
