@@ -37,6 +37,7 @@
 #include <zephyr/sys/__assert.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/mem_blocks.h>
+#include <zephyr/sys/mpsc_lockfree_priority.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/iterable_sections.h>
 #include <zephyr/rtio/sqe.h>
@@ -104,7 +105,13 @@ struct rtio {
 #endif
 
 	/** Submission queue */
+#ifdef CONFIG_RTIO_SUBMISSION_QUEUE_PRIORITY
+	struct mpsc_priority sq;
+	struct mpsc sq_pending;
+	struct mpsc sq_priority_queues[3];
+#else
 	struct mpsc sq;
+#endif
 
 	/** Completion queue */
 	struct mpsc cq;
@@ -125,7 +132,16 @@ struct rtio {
 		.sqe_pool = _sqe_pool,                                                             \
 		.cqe_pool = _cqe_pool,                                                             \
 		IF_ENABLED(CONFIG_RTIO_SYS_MEM_BLOCKS, (.block_pool = _block_pool,))               \
-		.sq = MPSC_INIT((name.sq)),                                                        \
+		IF_ENABLED(CONFIG_RTIO_SUBMISSION_QUEUE_PRIORITY,                                  \
+			   (.sq = { .queues = (name.sq_priority_queues), .num_priorities = 3 },       \
+			    .sq_pending = MPSC_INIT((name.sq_pending)),                                \
+			    .sq_priority_queues = {                                                     \
+				    MPSC_INIT((name.sq_priority_queues[0])),                            \
+				    MPSC_INIT((name.sq_priority_queues[1])),                            \
+				    MPSC_INIT((name.sq_priority_queues[2]))                             \
+			    },))                                                                         \
+		IF_ENABLED(CONFIG_RTIO_SUBMISSION_QUEUE_MPSC,                                      \
+			   (.sq = MPSC_INIT((name.sq)),))                                               \
 		.cq = MPSC_INIT((name.cq)),                                                        \
 	}
 /* @endcond */
@@ -348,7 +364,11 @@ static inline struct rtio_sqe *rtio_sqe_acquire(struct rtio *r)
 		return NULL;
 	}
 
+#ifdef CONFIG_RTIO_SUBMISSION_QUEUE_PRIORITY
+	mpsc_push(&r->sq_pending, &iodev_sqe->q);
+#else
 	mpsc_push(&r->sq, &iodev_sqe->q);
+#endif
 
 	SYS_PORT_TRACING_FUNC_EXIT(rtio, sqe_acquire, r, &iodev_sqe->sqe);
 	return &iodev_sqe->sqe;
@@ -393,7 +413,11 @@ static inline int rtio_sqe_acquire_array(struct rtio *r, size_t n, struct rtio_s
 
 	for (i = 0; i < n; i++) {
 		iodev_sqe = CONTAINER_OF(sqes[i], struct rtio_iodev_sqe, sqe);
+#ifdef CONFIG_RTIO_SUBMISSION_QUEUE_PRIORITY
+		mpsc_push(&r->sq_pending, &iodev_sqe->q);
+#else
 		mpsc_push(&r->sq, &iodev_sqe->q);
+#endif
 	}
 
 	return 0;
@@ -407,14 +431,63 @@ static inline int rtio_sqe_acquire_array(struct rtio *r, size_t n, struct rtio_s
 static inline void rtio_sqe_drop_all(struct rtio *r)
 {
 	struct rtio_iodev_sqe *iodev_sqe;
-	struct mpsc_node *node = mpsc_pop(&r->sq);
+	struct mpsc_node *node;
+
+#ifdef CONFIG_RTIO_SUBMISSION_QUEUE_PRIORITY
+	node = mpsc_pop(&r->sq_pending);
+#else
+	node = mpsc_pop(&r->sq);
+#endif
 
 	while (node != NULL) {
 		iodev_sqe = CONTAINER_OF(node, struct rtio_iodev_sqe, q);
 		rtio_sqe_pool_free(r->sqe_pool, iodev_sqe);
+#ifdef CONFIG_RTIO_SUBMISSION_QUEUE_PRIORITY
+		node = mpsc_pop(&r->sq_pending);
+#else
 		node = mpsc_pop(&r->sq);
+#endif
 	}
 }
+
+#ifdef CONFIG_RTIO_SUBMISSION_QUEUE_PRIORITY
+static inline uint8_t rtio_sqe_priority_index(uint8_t priority)
+{
+	if (priority >= RTIO_PRIO_HIGH) {
+		return 0U;
+	}
+
+	if (priority >= RTIO_PRIO_NORM) {
+		return 1U;
+	}
+
+	return 2U;
+}
+
+static inline void rtio_submit_pending(struct rtio *r)
+{
+	struct mpsc_node *node = mpsc_pop(&r->sq_pending);
+
+	while (node != NULL) {
+		struct rtio_iodev_sqe *head = CONTAINER_OF(node, struct rtio_iodev_sqe, q);
+		struct rtio_iodev_sqe *current = head;
+
+		while (current->sqe.flags & (RTIO_SQE_TRANSACTION | RTIO_SQE_CHAINED)) {
+			node = mpsc_pop(&r->sq_pending);
+			__ASSERT(node != NULL,
+				 "Expected a valid submission while building a chain or transaction");
+
+			current->next = CONTAINER_OF(node, struct rtio_iodev_sqe, q);
+			current = current->next;
+		}
+
+		current->next = NULL;
+		mpsc_priority_push(&r->sq, &head->q,
+				   rtio_sqe_priority_index(head->sqe.prio));
+		node = mpsc_pop(&r->sq_pending);
+	}
+}
+#endif
 
 /**
  * @brief Acquire a complete queue event if available
@@ -1026,6 +1099,9 @@ static inline int z_impl_rtio_submit(struct rtio *r, uint32_t wait_count)
 		r->submit_count = wait_count;
 	}
 
+#ifdef CONFIG_RTIO_SUBMISSION_QUEUE_PRIORITY
+	rtio_submit_pending(r);
+#endif
 	rtio_executor_submit(r);
 
 	if (wait_count > 0) {
@@ -1047,6 +1123,9 @@ static inline int z_impl_rtio_submit(struct rtio *r, uint32_t wait_count)
 	uintptr_t cq_complete_count = cq_count + wait_count;
 	bool wraps = cq_complete_count < cq_count;
 
+#ifdef CONFIG_RTIO_SUBMISSION_QUEUE_PRIORITY
+	rtio_submit_pending(r);
+#endif
 	rtio_executor_submit(r);
 
 	if (wraps) {

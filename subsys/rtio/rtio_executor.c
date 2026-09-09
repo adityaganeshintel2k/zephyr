@@ -80,7 +80,11 @@ static inline void rtio_iodev_submit(struct rtio_iodev_sqe *iodev_sqe, int last_
 void rtio_executor_submit(struct rtio *r)
 {
 	const uint16_t cancel_no_response = (RTIO_SQE_CANCELED | RTIO_SQE_NO_RESPONSE);
+		#ifdef CONFIG_RTIO_SUBMISSION_QUEUE_PRIORITY
+	struct mpsc_node *node = mpsc_priority_pop(&r->sq);
+#else
 	struct mpsc_node *node = mpsc_pop(&r->sq);
+#endif
 
 	while (node != NULL) {
 		struct rtio_iodev_sqe *iodev_sqe = CONTAINER_OF(node, struct rtio_iodev_sqe, q);
@@ -105,12 +109,17 @@ void rtio_executor_submit(struct rtio *r)
 				 "Cannot have more than one of these flags"
 				 " enabled: transaction, chained or multishot");
 #endif
+		#ifdef CONFIG_RTIO_SUBMISSION_QUEUE_PRIORITY
+			next = curr->next;
+			__ASSERT(next != NULL,
+				    "Expected a linked submission while in a transaction or chain");
+		#else
 			node = mpsc_pop(&iodev_sqe->r->sq);
-
 			__ASSERT(node != NULL,
 				    "Expected a valid submission in the queue while in a transaction or chain");
 
 			next = CONTAINER_OF(node, struct rtio_iodev_sqe, q);
+		#endif
 
 			/* If the current submission was cancelled before submit,
 			 * then cancel the next one and generate no response
@@ -132,7 +141,11 @@ void rtio_executor_submit(struct rtio *r)
 
 		rtio_iodev_submit(iodev_sqe, 0);
 
+		#ifdef CONFIG_RTIO_SUBMISSION_QUEUE_PRIORITY
+		node = mpsc_priority_pop(&r->sq);
+		#else
 		node = mpsc_pop(&r->sq);
+		#endif
 	}
 }
 
