@@ -60,7 +60,7 @@ struct rtio_sqe *i3c_rtio_copy(struct rtio *r, struct rtio_iodev *iodev, const s
 void i3c_rtio_init(struct i3c_rtio *ctx)
 {
 	k_sem_init(&ctx->lock, 1, 1);
-	mpsc_init(&ctx->io_q);
+	mpsc_priority_init(&ctx->io_pq, ctx->io_queues, ARRAY_SIZE(ctx->io_queues));
 	ctx->txn_curr = NULL;
 	ctx->txn_head = NULL;
 	ctx->iodev.api = &i3c_iodev_api;
@@ -83,7 +83,7 @@ static bool i3c_rtio_next(struct i3c_rtio *ctx, bool completion)
 		return false;
 	}
 
-	struct mpsc_node *next = mpsc_pop(&ctx->io_q);
+	struct mpsc_node *next = mpsc_priority_pop(&ctx->io_pq);
 
 	/* Nothing left to do */
 	if (next == NULL) {
@@ -120,7 +120,7 @@ bool i3c_rtio_complete(struct i3c_rtio *ctx, int status)
 }
 bool i3c_rtio_submit(struct i3c_rtio *ctx, struct rtio_iodev_sqe *iodev_sqe)
 {
-	mpsc_push(&ctx->io_q, &iodev_sqe->q);
+	mpsc_priority_push(&ctx->io_pq, &iodev_sqe->q, iodev_sqe->sqe.prio);
 	return i3c_rtio_next(ctx, false);
 }
 

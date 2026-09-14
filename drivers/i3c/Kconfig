@@ -224,6 +224,15 @@ config I3C_RTIO_FALLBACK_MSGS
 		In all likelihood 4 is going to work for everyone, but in case you do end up with
 		an issue where you are using RTIO, your driver does not implement submit natively,
 
+config I3C_RTIO_PRIORITY_LEVELS
+	int "Number of priority levels"
+	range 1 255
+	default 1
+	help
+	  Number of priority levels supported by the I3C RTIO submission queue.
+	  A value of 1 uses a single lock-free MPSC queue. Values greater than 1
+	  use one lock-free MPSC queue per priority level.
+
 endif # I3C_RTIO
 
 endif # I3C_CONTROLLER

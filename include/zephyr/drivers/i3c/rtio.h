@@ -11,6 +11,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/i3c.h>
 #include <zephyr/rtio/rtio.h>
+#include <zephyr/sys/mpsc_lockfree_priority.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,7 +24,8 @@ struct i3c_rtio {
 	struct k_sem lock;
 	struct k_spinlock slock;
 	struct rtio *r;
-	struct mpsc io_q;
+	struct mpsc_priority io_pq;
+	struct mpsc io_queues[CONFIG_I3C_RTIO_PRIORITY_LEVELS];
 	struct rtio_iodev iodev;
 	struct rtio_iodev_sqe *txn_head;
 	struct rtio_iodev_sqe *txn_curr;
