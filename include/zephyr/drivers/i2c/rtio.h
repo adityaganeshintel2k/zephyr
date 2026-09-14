@@ -10,6 +10,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/rtio/rtio.h>
+#include <zephyr/sys/mpsc_lockfree_priority.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,12 +23,8 @@ struct i2c_rtio {
 	struct k_sem lock;
 	struct k_spinlock slock;
 	struct rtio *r;
-#ifdef CONFIG_I2C_RTIO_SUBMISSION_QUEUE_PRIORITY
 	struct mpsc_priority io_pq;
 	struct mpsc io_queues[CONFIG_I2C_RTIO_PRIORITY_LEVELS];
-#else
-	struct mpsc io_q;
-#endif
 	struct rtio_iodev iodev;
 	struct rtio_iodev_sqe *txn_head;
 	struct rtio_iodev_sqe *txn_curr;

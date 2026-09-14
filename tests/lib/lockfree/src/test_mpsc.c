@@ -115,6 +115,31 @@ ZTEST(mpsc, test_priority_ordering)
 	zassert_is_null(mpsc_priority_pop(&priority_q));
 }
 
+ZTEST(mpsc, test_single_priority_fifo)
+{
+	struct mpsc queue;
+	struct mpsc_priority priority_q;
+	struct test_mpsc_priority_node nodes[] = {
+		{ .value = 0U },
+		{ .value = 1U },
+	};
+
+	mpsc_priority_init(&priority_q, &queue, 1U);
+	mpsc_priority_push(&priority_q, &nodes[0].node, 0U);
+	mpsc_priority_push(&priority_q, &nodes[1].node, 0U);
+
+	for (size_t i = 0U; i < ARRAY_SIZE(nodes); i++) {
+		struct mpsc_node *node = mpsc_priority_pop(&priority_q);
+		struct test_mpsc_priority_node *priority_node;
+
+		zassert_not_null(node);
+		priority_node = CONTAINER_OF(node, struct test_mpsc_priority_node, node);
+		zassert_equal(priority_node->value, i);
+	}
+
+	zassert_is_null(mpsc_priority_pop(&priority_q));
+}
+
 #define MPSC_FREEQ_SZ 8
 #define MPSC_ITERATIONS 100000
 #define MPSC_STACK_SIZE (512 + CONFIG_TEST_EXTRA_STACK_SIZE)
