@@ -7,6 +7,7 @@ menuconfig LIS3MDL
 	depends on DT_HAS_ST_LIS3MDL_MAGN_ENABLED
 	select I2C
 	select GPIO if $(dt_compat_any_has_prop,$(DT_COMPAT_ST_LIS3MDL_MAGN),irq-gpios)
+	select RTIO_WORKQ if SENSOR_ASYNC_API
 	help
 	  Enable driver for LIS3MDL I2C-based magnetometer.
 
@@ -67,5 +68,14 @@ config LIS3MDL_FS
 	  Magnetometer full-scale range.
 	  An X value for the config represents a range of +/- X gauss. Valid
 	  values are 4, 8, 12 and 16.
+
+config LIS3MDL_RTIO_SAMPLE_COUNT
+	int "Number of samples read per RTIO submit"
+	default 8
+	depends on SENSOR_ASYNC_API
+	help
+	  Minimal RTIO one-shot implementation: number of consecutive
+	  magnetometer samples read into a single buffer per submit() call.
+	  This exists to validate the RTIO read path, not for production use.
 
 endif # LIS3MDL

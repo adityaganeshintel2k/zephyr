@@ -101,11 +101,16 @@ static DEVICE_API(sensor, lis3mdl_driver_api) = {
 #endif
 	.sample_fetch = lis3mdl_sample_fetch,
 	.channel_get = lis3mdl_channel_get,
+#ifdef CONFIG_SENSOR_ASYNC_API
+	.submit = lis3mdl_submit,
+	.get_decoder = lis3mdl_get_decoder,
+#endif
 };
 
 int lis3mdl_init(const struct device *dev)
 {
 	const struct lis3mdl_config *config = dev->config;
+	struct lis3mdl_data *drv_data = dev->data;
 	uint8_t chip_cfg[6];
 	uint8_t id, idx;
 
@@ -136,6 +141,8 @@ int lis3mdl_init(const struct device *dev)
 		LOG_ERR("Invalid ODR value.");
 		return -EINVAL;
 	}
+
+	drv_data->odr_mhz = lis3mdl_odr_mhz[idx];
 
 	/* Configure sensor */
 	chip_cfg[0] = LIS3MDL_REG_CTRL1;

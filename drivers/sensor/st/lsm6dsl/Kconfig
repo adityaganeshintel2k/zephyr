@@ -11,6 +11,7 @@ menuconfig LSM6DSL
 	select I2C if $(dt_compat_on_bus,$(DT_COMPAT_ST_LSM6DSL),i2c)
 	select SPI if $(dt_compat_on_bus,$(DT_COMPAT_ST_LSM6DSL),spi)
 	select GPIO if $(dt_compat_any_has_prop,$(DT_COMPAT_ST_LSM6DSL),irq-gpios)
+	select RTIO_WORKQ if SENSOR_ASYNC_API
 	help
 	  Enable driver for LSM6DSL accelerometer and gyroscope
 	  sensor.
@@ -65,6 +66,15 @@ config LSM6DSL_SENSORHUB
 	bool "I2C sensorhub feature"
 	help
 	  Enable/disable internal sensorhub
+
+config LSM6DSL_RTIO_SAMPLE_COUNT
+	int "Number of samples read per RTIO submit"
+	default 8
+	depends on SENSOR_ASYNC_API
+	help
+	  Minimal RTIO one-shot implementation: number of consecutive
+	  accel+gyro samples read into a single buffer per submit() call.
+	  This exists to validate the RTIO read path, not for production use.
 
 choice LSM6DSL_EXTERNAL_SENSOR_0
 	prompt "External sensor 0"

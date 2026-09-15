@@ -13,6 +13,7 @@
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
+#include <zephyr/drivers/sensor.h>
 
 #define LIS3MDL_REG_WHO_AM_I            0x0F
 #define LIS3MDL_CHIP_ID                 0x3D
@@ -109,11 +110,18 @@ static const uint16_t lis3mdl_magn_gain[] = {
 	6842, 3421, 2281, 1711
 };
 
+/* ODR in milli-Hz, index-matched to lis3mdl_odr_strings/lis3mdl_odr_bits */
+static const uint32_t lis3mdl_odr_mhz[] = {
+	625, 1250, 2500, 5000, 10000, 20000,
+	40000, 80000, 155000, 300000, 560000, 1000000
+};
+
 struct lis3mdl_data {
 	int16_t x_sample;
 	int16_t y_sample;
 	int16_t z_sample;
 	int16_t temp_sample;
+	uint32_t odr_mhz;
 
 #ifdef CONFIG_LIS3MDL_TRIGGER
 	const struct device *dev;
@@ -148,6 +156,13 @@ int lis3mdl_trigger_set(const struct device *dev,
 int lis3mdl_sample_fetch(const struct device *dev, enum sensor_channel chan);
 
 int lis3mdl_init_interrupt(const struct device *dev);
+#endif
+
+#ifdef CONFIG_SENSOR_ASYNC_API
+#include <zephyr/rtio/rtio.h>
+
+void lis3mdl_submit(const struct device *dev, struct rtio_iodev_sqe *iodev_sqe);
+int lis3mdl_get_decoder(const struct device *dev, const struct sensor_decoder_api **decoder);
 #endif
 
 #endif /* __SENSOR_LIS3MDL__ */

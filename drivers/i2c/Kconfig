@@ -107,6 +107,17 @@ config I2C_RTIO
 	help
 	  API and implementations of I2C for RTIO
 
+config I2C_RTIO_PRIORITY_LEVELS
+	int "Number of priority levels"
+	range 1 255
+	default 1
+	help
+	  Number of priority levels supported by the I2C RTIO submission queue.
+	  A value of 1 uses a single lock-free MPSC queue. Values greater than 1
+	  use one lock-free MPSC queue per priority level.
+	  This is always defined (independent of I2C_RTIO) since
+	  <zephyr/drivers/i2c/rtio.h> is included unconditionally by some drivers.
+
 if I2C_RTIO
 config I2C_RTIO_SQ_SIZE
 	int "Submission queue size for blocking calls"
@@ -142,14 +153,6 @@ config I2C_RTIO_FALLBACK_MSGS
 		an issue where you are using RTIO, your driver does not implement submit natively,
 		and get an error relating to not enough i2c msgs this is the Kconfig to manipulate.
 
-config I2C_RTIO_PRIORITY_LEVELS
-	int "Number of priority levels"
-	range 1 255
-	default 1
-	help
-	  Number of priority levels supported by the I2C RTIO submission queue.
-	  A value of 1 uses a single lock-free MPSC queue. Values greater than 1
-	  use one lock-free MPSC queue per priority level.
 endif # I2C_RTIO
 
 

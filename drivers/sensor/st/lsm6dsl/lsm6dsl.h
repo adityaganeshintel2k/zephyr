@@ -17,6 +17,10 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
 
+#ifdef CONFIG_SENSOR_ASYNC_API
+#include <zephyr/rtio/rtio.h>
+#endif
+
 #if DT_ANY_INST_ON_BUS_STATUS_OKAY(spi)
 #include <zephyr/drivers/spi.h>
 #endif /* DT_ANY_INST_ON_BUS_STATUS_OKAY(spi) */
@@ -698,6 +702,11 @@ int lsm6dsl_trigger_set(const struct device *dev,
 			sensor_trigger_handler_t handler);
 
 int lsm6dsl_init_interrupt(const struct device *dev);
+#endif
+
+#ifdef CONFIG_SENSOR_ASYNC_API
+void lsm6dsl_submit(const struct device *dev, struct rtio_iodev_sqe *iodev_sqe);
+int lsm6dsl_get_decoder(const struct device *dev, const struct sensor_decoder_api **decoder);
 #endif
 
 #endif /* ZEPHYR_DRIVERS_SENSOR_LSM6DSL_LSM6DSL_H_ */

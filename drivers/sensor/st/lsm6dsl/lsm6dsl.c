@@ -720,6 +720,10 @@ static DEVICE_API(sensor, lsm6dsl_driver_api) = {
 #endif
 	.sample_fetch = lsm6dsl_sample_fetch,
 	.channel_get = lsm6dsl_channel_get,
+#ifdef CONFIG_SENSOR_ASYNC_API
+	.submit = lsm6dsl_submit,
+	.get_decoder = lsm6dsl_get_decoder,
+#endif
 };
 
 static int lsm6dsl_init_chip(const struct device *dev)

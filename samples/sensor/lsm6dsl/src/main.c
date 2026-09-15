@@ -10,6 +10,48 @@
 #include <stdio.h>
 #include <zephyr/sys/util.h>
 
+#ifdef CONFIG_SENSOR_ASYNC_API
+#include <zephyr/rtio/rtio.h>
+#include <zephyr/drivers/sensor_data_types.h>
+
+RTIO_DEFINE(lsm6dsl_rtio_ctx, 1, 1);
+SENSOR_DT_READ_IODEV(lsm6dsl_rtio_iodev, DT_COMPAT_GET_ANY_STATUS_OKAY(st_lsm6dsl),
+		     {SENSOR_CHAN_ACCEL_XYZ, 0}, {SENSOR_CHAN_GYRO_XYZ, 0});
+
+/* Proves the driver's submit()/get_decoder() (RTIO) path runs, as opposed to sample_fetch() */
+static void lsm6dsl_rtio_test(const struct device *dev)
+{
+	static uint8_t buf[512];
+	const struct sensor_decoder_api *decoder;
+	struct sensor_chan_spec accel_spec = {SENSOR_CHAN_ACCEL_XYZ, 0};
+	uint32_t fit = 0;
+	struct sensor_three_axis_data data;
+	int rc = sensor_read(&lsm6dsl_rtio_iodev, &lsm6dsl_rtio_ctx, buf, sizeof(buf));
+
+	if (rc != 0) {
+		printk("RTIO sensor_read() failed: %d\n", rc);
+		return;
+	}
+
+	rc = sensor_get_decoder(dev, &decoder);
+	if (rc != 0) {
+		printk("sensor_get_decoder() failed: %d\n", rc);
+		return;
+	}
+
+	printk("--- RTIO path: decoding buffered accel samples ---\n");
+	while (decoder->decode(buf, accel_spec, &fit, 1, &data) == 1) {
+		/* q31 -> physical value: raw / 2^(31 - shift) */
+		double scale = (double)(1U << (31 - data.shift));
+
+		printk("RTIO accel[%u]: x=%.3f y=%.3f z=%.3f m/s^2 (raw x=%d y=%d z=%d shift=%d)\n",
+		       fit - 1, data.readings[0].x / scale, data.readings[0].y / scale,
+		       data.readings[0].z / scale, data.readings[0].x, data.readings[0].y,
+		       data.readings[0].z, data.shift);
+	}
+}
+#endif /* CONFIG_SENSOR_ASYNC_API */
+
 static int print_samples;
 static int lsm6dsl_trig_cnt;
 
@@ -139,6 +181,10 @@ int main(void)
 		/* Erase previous */
 		printk("\0033\014");
 		printf("LSM6DSL sensor samples:\n\n");
+
+#ifdef CONFIG_SENSOR_ASYNC_API
+		lsm6dsl_rtio_test(lsm6dsl_dev);
+#endif
 
 		/* lsm6dsl accel */
 		sprintf(out_str, "accel x:%f ms/2 y:%f ms/2 z:%f ms/2",
