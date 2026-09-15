@@ -159,7 +159,7 @@ bool i2c_rtio_complete(struct i2c_rtio *ctx, int status)
 }
 bool i2c_rtio_submit(struct i2c_rtio *ctx, struct rtio_iodev_sqe *iodev_sqe)
 {
-	mpsc_priority_push(&ctx->io_pq, &iodev_sqe->q, iodev_sqe->sqe->prio);
+	mpsc_priority_push(&ctx->io_pq, &iodev_sqe->q, iodev_sqe->sqe.prio);
 	return i2c_rtio_next(ctx, false);
 }
 
