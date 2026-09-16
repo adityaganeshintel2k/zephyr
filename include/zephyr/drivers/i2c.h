@@ -1336,6 +1336,24 @@ struct rtio_sqe *i2c_rtio_copy(struct rtio *r,
 			       uint8_t num_msgs);
 
 /**
+ * @brief Copy the i2c_msgs into a set of RTIO requests with a priority
+ *
+ * @param r RTIO context
+ * @param iodev RTIO IODev to target for the submissions
+ * @param msgs Array of messages
+ * @param num_msgs Number of i2c msgs in array
+ * @param prio RTIO priority to assign to each generated SQE
+ *
+ * @retval sqe Last submission in the queue added
+ * @retval NULL Not enough memory in the context to copy the requests
+ */
+struct rtio_sqe *i2c_rtio_copy_prio(struct rtio *r,
+				    struct rtio_iodev *iodev,
+				    const struct i2c_msg *msgs,
+				    uint8_t num_msgs,
+				    uint8_t prio);
+
+/**
  * @brief Copy the register address and data to a SQE
  *
  * @param r RTIO context
@@ -1348,6 +1366,21 @@ struct rtio_sqe *i2c_rtio_copy(struct rtio *r,
  */
 struct rtio_sqe *i2c_rtio_copy_reg_write_byte(struct rtio *r, struct rtio_iodev *iodev,
 					      uint8_t reg_addr, uint8_t data);
+
+/**
+ * @brief Copy the register address and data to a SQE with a priority
+ *
+ * @param r RTIO context
+ * @param iodev RTIO IODev to target for the submissions
+ * @param reg_addr target register address
+ * @param data data to be written
+ * @param prio RTIO priority to assign to the generated SQE
+ *
+ * @retval sqe Last submission in the queue added
+ * @retval NULL Not enough memory in the context to copy the requests
+ */
+struct rtio_sqe *i2c_rtio_copy_reg_write_byte_prio(struct rtio *r, struct rtio_iodev *iodev,
+						   uint8_t reg_addr, uint8_t data, uint8_t prio);
 
 /**
  * @brief acquire and configure a i2c burst read transmission
@@ -1363,6 +1396,23 @@ struct rtio_sqe *i2c_rtio_copy_reg_write_byte(struct rtio *r, struct rtio_iodev 
  */
 struct rtio_sqe *i2c_rtio_copy_reg_burst_read(struct rtio *r, struct rtio_iodev *iodev,
 					      uint8_t start_addr, void *buf, size_t num_bytes);
+
+/**
+ * @brief acquire and configure a i2c burst read transmission with a priority
+ *
+ * @param r RTIO context
+ * @param iodev RTIO IODev to target for the submissions
+ * @param start_addr target register address
+ * @param buf Memory pool that stores the retrieved data.
+ * @param num_bytes Number of bytes to read.
+ * @param prio RTIO priority to assign to each generated SQE
+ *
+ * @retval sqe Last submission in the queue added
+ * @retval NULL Not enough memory in the context to copy the requests
+ */
+struct rtio_sqe *i2c_rtio_copy_reg_burst_read_prio(struct rtio *r, struct rtio_iodev *iodev,
+						   uint8_t start_addr, void *buf, size_t num_bytes,
+						   uint8_t prio);
 
 #endif /* CONFIG_I2C_RTIO */
 

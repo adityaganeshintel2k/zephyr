@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <zephyr/sys/util.h>
 
+#define HAS_MAGN0 (DT_HAS_ALIAS(magn0) && DT_NODE_HAS_STATUS(DT_ALIAS(magn0), okay))
+
 #ifdef CONFIG_SENSOR_ASYNC_API
 #include <zephyr/rtio/rtio.h>
 #include <zephyr/drivers/sensor_data_types.h>
@@ -138,11 +140,22 @@ int main(void)
 	char out_str[64];
 	struct sensor_value odr_attr;
 	const struct device *const lsm6dsl_dev = DEVICE_DT_GET_ONE(st_lsm6dsl);
+#if HAS_MAGN0
+	const struct device *const lis3mdl_dev = DEVICE_DT_GET(DT_ALIAS(magn0));
+	struct sensor_value lis3mdl_magn[3];
+#endif
 
 	if (!device_is_ready(lsm6dsl_dev)) {
 		printk("sensor: device not ready.\n");
 		return 0;
 	}
+
+#if HAS_MAGN0
+	if (!device_is_ready(lis3mdl_dev)) {
+		printk("%s: device not ready.\n", lis3mdl_dev->name);
+		return 0;
+	}
+#endif
 
 	/* set accel/gyro sampling frequency to 104 Hz */
 	odr_attr.val1 = 104;
@@ -199,6 +212,19 @@ int main(void)
 							   sensor_value_to_double(&gyro_y_out),
 							   sensor_value_to_double(&gyro_z_out));
 		printk("%s\n", out_str);
+
+#if HAS_MAGN0
+		if (sensor_sample_fetch(lis3mdl_dev) < 0) {
+			printk("LIS3MDL Sensor sample update error\n");
+			return 0;
+		}
+
+		sensor_channel_get(lis3mdl_dev, SENSOR_CHAN_MAGN_XYZ, lis3mdl_magn);
+		printk("lis3mdl magn x:%f G y:%f G z:%f G\n",
+		       sensor_value_to_double(&lis3mdl_magn[0]),
+		       sensor_value_to_double(&lis3mdl_magn[1]),
+		       sensor_value_to_double(&lis3mdl_magn[2]));
+#endif
 
 #if defined(CONFIG_LSM6DSL_EXT0_LIS2MDL)
 		/* lsm6dsl external magn */

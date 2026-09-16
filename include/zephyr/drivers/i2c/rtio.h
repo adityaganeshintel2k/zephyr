@@ -64,6 +64,15 @@ struct rtio_sqe *i2c_rtio_copy(struct rtio *r, struct rtio_iodev *iodev, const s
 			       uint8_t num_msgs);
 
 /**
+ * @brief Copy an array of i2c_msgs to rtio submissions with a priority
+ *
+ * @retval sqe Last sqe setup in the copy
+ * @retval NULL Not enough memory to copy the transaction
+ */
+struct rtio_sqe *i2c_rtio_copy_prio(struct rtio *r, struct rtio_iodev *iodev,
+				    const struct i2c_msg *msgs, uint8_t num_msgs, uint8_t prio);
+
+/**
  * @brief Initialize an i2c rtio context
  *
  * @param ctx I2C RTIO driver context
@@ -109,6 +118,17 @@ int i2c_rtio_configure(struct i2c_rtio *ctx, uint32_t i2c_config);
  * See i2c_transfer().
  */
 int i2c_rtio_transfer(struct i2c_rtio *ctx, struct i2c_msg *msgs, uint8_t num_msgs, uint16_t addr);
+
+/**
+ * @brief Transfer i2c messages in a blocking call with a priority
+ *
+ * Provides a compatible API for the existing i2c_transfer API, and blocks the caller
+ * until the transfer completes.
+ *
+ * See i2c_transfer().
+ */
+int i2c_rtio_transfer_prio(struct i2c_rtio *ctx, struct i2c_msg *msgs, uint8_t num_msgs,
+			   uint16_t addr, uint8_t prio);
 
 /**
  * @brief Perform an I2C bus recovery in a blocking call

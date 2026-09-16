@@ -18,8 +18,8 @@ const struct rtio_iodev_api i2c_iodev_api = {
 	.submit = i2c_iodev_submit,
 };
 
-struct rtio_sqe *i2c_rtio_copy(struct rtio *r, struct rtio_iodev *iodev, const struct i2c_msg *msgs,
-			       uint8_t num_msgs)
+struct rtio_sqe *i2c_rtio_copy_prio(struct rtio *r, struct rtio_iodev *iodev,
+				    const struct i2c_msg *msgs, uint8_t num_msgs, uint8_t prio)
 {
 	__ASSERT(num_msgs > 0, "Expecting at least one message to copy");
 
@@ -34,11 +34,9 @@ struct rtio_sqe *i2c_rtio_copy(struct rtio *r, struct rtio_iodev *iodev, const s
 		}
 
 		if (msgs[i].flags & I2C_MSG_READ) {
-			rtio_sqe_prep_read(sqe, iodev, RTIO_PRIO_NORM, msgs[i].buf, msgs[i].len,
-					   NULL);
+			rtio_sqe_prep_read(sqe, iodev, prio, msgs[i].buf, msgs[i].len, NULL);
 		} else {
-			rtio_sqe_prep_write(sqe, iodev, RTIO_PRIO_NORM, msgs[i].buf, msgs[i].len,
-					    NULL);
+			rtio_sqe_prep_write(sqe, iodev, prio, msgs[i].buf, msgs[i].len, NULL);
 		}
 		sqe->flags |= RTIO_SQE_TRANSACTION;
 		sqe->iodev_flags =
@@ -52,8 +50,14 @@ struct rtio_sqe *i2c_rtio_copy(struct rtio *r, struct rtio_iodev *iodev, const s
 	return sqe;
 }
 
-struct rtio_sqe *i2c_rtio_copy_reg_write_byte(struct rtio *r, struct rtio_iodev *iodev,
-					      uint8_t reg_addr, uint8_t data)
+struct rtio_sqe *i2c_rtio_copy(struct rtio *r, struct rtio_iodev *iodev, const struct i2c_msg *msgs,
+			       uint8_t num_msgs)
+{
+	return i2c_rtio_copy_prio(r, iodev, msgs, num_msgs, RTIO_PRIO_NORM);
+}
+
+struct rtio_sqe *i2c_rtio_copy_reg_write_byte_prio(struct rtio *r, struct rtio_iodev *iodev,
+						   uint8_t reg_addr, uint8_t data, uint8_t prio)
 {
 	uint8_t msg[2];
 
@@ -65,13 +69,20 @@ struct rtio_sqe *i2c_rtio_copy_reg_write_byte(struct rtio *r, struct rtio_iodev 
 	}
 	msg[0] = reg_addr;
 	msg[1] = data;
-	rtio_sqe_prep_tiny_write(sqe, iodev, RTIO_PRIO_NORM, msg, sizeof(msg), NULL);
+	rtio_sqe_prep_tiny_write(sqe, iodev, prio, msg, sizeof(msg), NULL);
 	sqe->iodev_flags = RTIO_IODEV_I2C_STOP;
 	return sqe;
 }
 
-struct rtio_sqe *i2c_rtio_copy_reg_burst_read(struct rtio *r, struct rtio_iodev *iodev,
-					      uint8_t start_addr, void *buf, size_t num_bytes)
+struct rtio_sqe *i2c_rtio_copy_reg_write_byte(struct rtio *r, struct rtio_iodev *iodev,
+					      uint8_t reg_addr, uint8_t data)
+{
+	return i2c_rtio_copy_reg_write_byte_prio(r, iodev, reg_addr, data, RTIO_PRIO_NORM);
+}
+
+struct rtio_sqe *i2c_rtio_copy_reg_burst_read_prio(struct rtio *r, struct rtio_iodev *iodev,
+						   uint8_t start_addr, void *buf, size_t num_bytes,
+						   uint8_t prio)
 {
 	struct rtio_sqe *sqe = rtio_sqe_acquire(r);
 
@@ -79,7 +90,7 @@ struct rtio_sqe *i2c_rtio_copy_reg_burst_read(struct rtio *r, struct rtio_iodev 
 		rtio_sqe_drop_all(r);
 		return NULL;
 	}
-	rtio_sqe_prep_tiny_write(sqe, iodev, RTIO_PRIO_NORM, &start_addr, 1, NULL);
+	rtio_sqe_prep_tiny_write(sqe, iodev, prio, &start_addr, 1, NULL);
 	sqe->flags |= RTIO_SQE_TRANSACTION;
 
 	sqe = rtio_sqe_acquire(r);
@@ -87,10 +98,17 @@ struct rtio_sqe *i2c_rtio_copy_reg_burst_read(struct rtio *r, struct rtio_iodev 
 		rtio_sqe_drop_all(r);
 		return NULL;
 	}
-	rtio_sqe_prep_read(sqe, iodev, RTIO_PRIO_NORM, buf, num_bytes, NULL);
+	rtio_sqe_prep_read(sqe, iodev, prio, buf, num_bytes, NULL);
 	sqe->iodev_flags |= RTIO_IODEV_I2C_STOP | RTIO_IODEV_I2C_RESTART;
 
 	return sqe;
+}
+
+struct rtio_sqe *i2c_rtio_copy_reg_burst_read(struct rtio *r, struct rtio_iodev *iodev,
+					      uint8_t start_addr, void *buf, size_t num_bytes)
+{
+	return i2c_rtio_copy_reg_burst_read_prio(r, iodev, start_addr, buf, num_bytes,
+					       RTIO_PRIO_NORM);
 }
 
 void i2c_rtio_init(struct i2c_rtio *ctx, const struct device *dev)
@@ -157,13 +175,17 @@ bool i2c_rtio_complete(struct i2c_rtio *ctx, int status)
 	rtio_iodev_sqe_ok(ctx->txn_head, status);
 	return i2c_rtio_next(ctx, true);
 }
+
 bool i2c_rtio_submit(struct i2c_rtio *ctx, struct rtio_iodev_sqe *iodev_sqe)
 {
+	LOG_INF("submit prio=%u", iodev_sqe->sqe.prio);
+
 	mpsc_priority_push(&ctx->io_pq, &iodev_sqe->q, iodev_sqe->sqe.prio);
 	return i2c_rtio_next(ctx, false);
 }
 
-int i2c_rtio_transfer(struct i2c_rtio *ctx, struct i2c_msg *msgs, uint8_t num_msgs, uint16_t addr)
+int i2c_rtio_transfer_prio(struct i2c_rtio *ctx, struct i2c_msg *msgs, uint8_t num_msgs,
+			   uint16_t addr, uint8_t prio)
 {
 	struct rtio_iodev *iodev = &ctx->iodev;
 	struct rtio *const r = ctx->r;
@@ -175,7 +197,7 @@ int i2c_rtio_transfer(struct i2c_rtio *ctx, struct i2c_msg *msgs, uint8_t num_ms
 
 	ctx->dt_spec.addr = addr;
 
-	sqe = i2c_rtio_copy(r, iodev, msgs, num_msgs);
+	sqe = i2c_rtio_copy_prio(r, iodev, msgs, num_msgs, prio);
 	if (sqe == NULL) {
 		LOG_ERR("Not enough submission queue entries");
 		res = -ENOMEM;
@@ -194,6 +216,11 @@ int i2c_rtio_transfer(struct i2c_rtio *ctx, struct i2c_msg *msgs, uint8_t num_ms
 out:
 	k_sem_give(&ctx->lock);
 	return res;
+}
+
+int i2c_rtio_transfer(struct i2c_rtio *ctx, struct i2c_msg *msgs, uint8_t num_msgs, uint16_t addr)
+{
+	return i2c_rtio_transfer_prio(ctx, msgs, num_msgs, addr, RTIO_PRIO_HIGH);
 }
 
 int i2c_rtio_configure(struct i2c_rtio *ctx, uint32_t i2c_config)

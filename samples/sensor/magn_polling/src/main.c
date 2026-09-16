@@ -10,6 +10,8 @@
 #include <zephyr/sys/printk.h>
 #include <stdio.h>
 
+#define HAS_ACCEL0 (DT_HAS_ALIAS(accel0) && DT_NODE_HAS_STATUS(DT_ALIAS(accel0), okay))
+
 #ifdef CONFIG_SENSOR_ASYNC_API
 #include <zephyr/rtio/rtio.h>
 #include <zephyr/drivers/sensor_data_types.h>
@@ -53,12 +55,38 @@ int main(void)
 {
 	const struct device *const dev = DEVICE_DT_GET(DT_ALIAS(magn0));
 	struct sensor_value value_x, value_y, value_z;
+#if HAS_ACCEL0
+	const struct device *const accel_dev = DEVICE_DT_GET(DT_ALIAS(accel0));
+	struct sensor_value accel[3], gyro[3];
+	struct sensor_value odr_attr = {
+		.val1 = 104,
+	};
+#endif
 	int ret;
 
 	if (!device_is_ready(dev)) {
 		printk("sensor: device not ready.\n");
 		return 0;
 	}
+
+#if HAS_ACCEL0
+	if (!device_is_ready(accel_dev)) {
+		printk("%s: device not ready.\n", accel_dev->name);
+		return 0;
+	}
+
+	if (sensor_attr_set(accel_dev, SENSOR_CHAN_ACCEL_XYZ,
+			    SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
+		printk("Cannot set sampling frequency for accelerometer.\n");
+		return 0;
+	}
+
+	if (sensor_attr_set(accel_dev, SENSOR_CHAN_GYRO_XYZ,
+			    SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
+		printk("Cannot set sampling frequency for gyro.\n");
+		return 0;
+	}
+#endif
 
 	printk("Polling magnetometer data from %s.\n", dev->name);
 
@@ -80,6 +108,23 @@ int main(void)
 		       sensor_value_to_double(&value_x),
 		       sensor_value_to_double(&value_y),
 		       sensor_value_to_double(&value_z));
+
+#if HAS_ACCEL0
+		ret = sensor_sample_fetch(accel_dev);
+		if (ret) {
+			printk("lsm6dsl sensor_sample_fetch failed ret %d\n", ret);
+			return 0;
+		}
+
+		sensor_channel_get(accel_dev, SENSOR_CHAN_ACCEL_XYZ, accel);
+		sensor_channel_get(accel_dev, SENSOR_CHAN_GYRO_XYZ, gyro);
+		printf("LSM6DSL accel (m/s^2): x=%f y=%f z=%f\n",
+		       sensor_value_to_double(&accel[0]), sensor_value_to_double(&accel[1]),
+		       sensor_value_to_double(&accel[2]));
+		printf("LSM6DSL gyro (rad/s): x=%f y=%f z=%f\n",
+		       sensor_value_to_double(&gyro[0]), sensor_value_to_double(&gyro[1]),
+		       sensor_value_to_double(&gyro[2]));
+#endif
 
 		k_sleep(K_MSEC(500));
 	}
