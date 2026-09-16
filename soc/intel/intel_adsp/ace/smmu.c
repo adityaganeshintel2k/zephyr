@@ -177,6 +177,96 @@
  */
 #define SMMU_PAGE_STATUS_PAGE_IN_STATUS_MASK (0x3)
 
+/**
+ * SMMU_PAGE_CMD_CTRL DMA APB Direction Enable bit mask.
+ *
+ * Opens the APB path so firmware can program the paging DMAC registers.
+ * Must be disabled again once programming is done.
+ */
+#define SMMU_PAGE_CMD_CTRL_DMA_APB_DIR_EN GENMASK(5, 4)
+
+/** DMAC instance used by the SMMU for page-in operations. */
+#define SMMU_PAGE_IN_DMAC 0
+
+/** DMAC instance used by the SMMU for page-out operations. */
+#define SMMU_PAGE_OUT_DMAC 1
+
+/** Channel used for paging in each DMAC instance, CH1 in the hardware registers. */
+#define SMMU_PAGE_DMAC_CH 0
+
+/** Width in bytes of a single SMMU paging DMA transfer. */
+#define SMMU_DMA_DATA_WIDTH 64
+
+/** Base address of the DW AXI DMAC instance @p x used by the SMMU. */
+#define SMMU_DMAC_BASE(x) (SMMU_BASE + 0x14000 + ((x) * 0x4000))
+
+/** DMAC configuration register (64-bit). */
+#define SMMU_DMAC_CFGREG(x) (SMMU_DMAC_BASE(x) + 0x10)
+
+/** DMAC_CFGREG DMAC enable bit. */
+#define SMMU_DMAC_CFGREG_DMAC_EN BIT64(0)
+
+/** DMAC_CFGREG interrupt enable bit. */
+#define SMMU_DMAC_CFGREG_INT_EN BIT64(1)
+
+/** Base address of channel @p y of DMAC instance @p x. */
+#define SMMU_DMAC_CH_BASE(x, y) (SMMU_DMAC_BASE(x) + (((y) + 1) * 0x100))
+
+/** Channel block transfer size register (64-bit). */
+#define SMMU_DMAC_CH_BLOCK_TS(x, y) (SMMU_DMAC_CH_BASE(x, y) + 0x10)
+
+/** Channel control register (64-bit). */
+#define SMMU_DMAC_CH_CTL(x, y) (SMMU_DMAC_CH_BASE(x, y) + 0x18)
+
+/** Channel configuration register (64-bit). */
+#define SMMU_DMAC_CH_CFG(x, y) (SMMU_DMAC_CH_BASE(x, y) + 0x20)
+
+/** Channel interrupt signal enable register (64-bit). */
+#define SMMU_DMAC_CH_INTSIGNAL_EN(x, y) (SMMU_DMAC_CH_BASE(x, y) + 0x90)
+
+/** Channel interrupt clear register (64-bit). */
+#define SMMU_DMAC_CH_INTCLEAR(x, y) (SMMU_DMAC_CH_BASE(x, y) + 0x98)
+
+/** CHx_CTL transfer width encoding for a 512-bit (64 byte) interface. */
+#define SMMU_DMAC_CH_CTL_TR_WIDTH_64B 6
+
+/** CHx_CTL burst transaction length. Hardware truncates this to its 2-bit maximum. */
+#define SMMU_DMAC_CH_CTL_MSIZE_MAX 15
+
+/* CHx_CTL fields. */
+#define SMMU_DMAC_CH_CTL_SRC_TR_WIDTH(x)        FIELD_PREP(GENMASK64(10, 8), x)
+#define SMMU_DMAC_CH_CTL_DST_TR_WIDTH(x)        FIELD_PREP(GENMASK64(13, 11), x)
+#define SMMU_DMAC_CH_CTL_SRC_MSIZE(x)           FIELD_PREP(GENMASK64(17, 14), x)
+#define SMMU_DMAC_CH_CTL_DST_MSIZE(x)           FIELD_PREP(GENMASK64(21, 18), x)
+#define SMMU_DMAC_CH_CTL_NONPOSTED_LASTWRITE_EN BIT64(30)
+#define SMMU_DMAC_CH_CTL_ARLEN_EN               BIT64(38)
+#define SMMU_DMAC_CH_CTL_ARLEN(x)               FIELD_PREP(GENMASK64(46, 39), x)
+#define SMMU_DMAC_CH_CTL_AWLEN_EN               BIT64(47)
+#define SMMU_DMAC_CH_CTL_AWLEN(x)               FIELD_PREP(GENMASK64(55, 48), x)
+
+/** CHx_CFG outstanding request limit, maximum supported by the hardware. */
+#define SMMU_DMAC_CH_CFG_OSR_LMT_MAX 15
+
+/* CHx_CFG fields. */
+#define SMMU_DMAC_CH_CFG_SRC_OSR_LMT(x) FIELD_PREP(GENMASK64(58, 55), x)
+#define SMMU_DMAC_CH_CFG_DST_OSR_LMT(x) FIELD_PREP(GENMASK64(62, 59), x)
+
+/*
+ * AXI burst lengths for the paging channels. Read bursts longer than a single
+ * transfer do not work on this hardware, so ARLEN stays at zero on both.
+ */
+#define SMMU_PAGE_IN_DMAC_AWLEN  0
+#define SMMU_PAGE_IN_DMAC_ARLEN  0
+#define SMMU_PAGE_OUT_DMAC_AWLEN 1
+#define SMMU_PAGE_OUT_DMAC_ARLEN 0
+
+/* CHx_INTSIGNAL_ENABLEREG bits for transfer completion and AXI error reporting. */
+#define SMMU_DMAC_CH_INT_DMA_TFR_DONE BIT64(1)
+#define SMMU_DMAC_CH_INT_SRC_DEC_ERR  BIT64(5)
+#define SMMU_DMAC_CH_INT_DST_DEC_ERR  BIT64(6)
+#define SMMU_DMAC_CH_INT_SRC_SLV_ERR  BIT64(7)
+#define SMMU_DMAC_CH_INT_DST_SLV_ERR  BIT64(8)
+
 enum smmu_page_map_state {
 	/** Page is not mapped */
 	SMMU_PAGE_UNMAPPED = 0,
@@ -363,6 +453,70 @@ __imr static void page_in(const uintptr_t virt_addr)
 	wait_smmu_paging_idle();
 }
 
+/**
+ * Enable a DMA Controller instance and configure its paging channel.
+ *
+ * @param dmac DMAC instance index.
+ * @param block_ts Block transfer size matching the active page size.
+ * @param awlen AXI write burst length.
+ * @param arlen AXI read burst length.
+ */
+__imr static void cfg_dmac_inst(const uint32_t dmac, const uint32_t block_ts,
+				const uint32_t awlen, const uint32_t arlen)
+{
+	uint64_t ctl;
+	uint64_t cfg;
+
+	sys_write64(SMMU_DMAC_CFGREG_DMAC_EN | SMMU_DMAC_CFGREG_INT_EN, SMMU_DMAC_CFGREG(dmac));
+
+	ctl = SMMU_DMAC_CH_CTL_SRC_TR_WIDTH(SMMU_DMAC_CH_CTL_TR_WIDTH_64B) |
+	      SMMU_DMAC_CH_CTL_DST_TR_WIDTH(SMMU_DMAC_CH_CTL_TR_WIDTH_64B) |
+	      SMMU_DMAC_CH_CTL_SRC_MSIZE(SMMU_DMAC_CH_CTL_MSIZE_MAX) |
+	      SMMU_DMAC_CH_CTL_DST_MSIZE(SMMU_DMAC_CH_CTL_MSIZE_MAX) |
+	      SMMU_DMAC_CH_CTL_NONPOSTED_LASTWRITE_EN | SMMU_DMAC_CH_CTL_ARLEN_EN |
+	      SMMU_DMAC_CH_CTL_ARLEN(arlen) | SMMU_DMAC_CH_CTL_AWLEN_EN |
+	      SMMU_DMAC_CH_CTL_AWLEN(awlen);
+	sys_write64(ctl, SMMU_DMAC_CH_CTL(dmac, SMMU_PAGE_DMAC_CH));
+
+	sys_write64(block_ts, SMMU_DMAC_CH_BLOCK_TS(dmac, SMMU_PAGE_DMAC_CH));
+
+	/* Fields left out below are zeroed, which selects memory-to-memory transfers. */
+	cfg = SMMU_DMAC_CH_CFG_SRC_OSR_LMT(SMMU_DMAC_CH_CFG_OSR_LMT_MAX) |
+	      SMMU_DMAC_CH_CFG_DST_OSR_LMT(SMMU_DMAC_CH_CFG_OSR_LMT_MAX);
+	sys_write64(cfg, SMMU_DMAC_CH_CFG(dmac, SMMU_PAGE_DMAC_CH));
+
+	sys_write64(SMMU_DMAC_CH_INT_DMA_TFR_DONE | SMMU_DMAC_CH_INT_SRC_DEC_ERR |
+			    SMMU_DMAC_CH_INT_DST_DEC_ERR | SMMU_DMAC_CH_INT_SRC_SLV_ERR |
+			    SMMU_DMAC_CH_INT_DST_SLV_ERR,
+		    SMMU_DMAC_CH_INTSIGNAL_EN(dmac, SMMU_PAGE_DMAC_CH));
+
+	sys_write64(0, SMMU_DMAC_CH_INTCLEAR(dmac, SMMU_PAGE_DMAC_CH));
+}
+
+/**
+ * Configure the DMA Controllers used by the SMMU for paging operations.
+ *
+ * The SMMU drives page-in and page-out through two dedicated DW AXI DMAC
+ * instances that have to be programmed here, so the behaviour does not depend
+ * on earlier boot stages.
+ */
+__imr static void configure_dmacs(void)
+{
+	/* The DMACs block transfer size has to match the SMMU page size. */
+	const uint32_t block_ts = (SMMU_PAGE_SIZE / SMMU_DMA_DATA_WIDTH) - 1;
+
+	/* Open the APB path so the DMAC registers become writable. */
+	sys_write32(SMMU_PAGE_CMD_CTRL_DMA_APB_DIR_EN, SMMU_PAGE_CMD_CTRL);
+
+	cfg_dmac_inst(SMMU_PAGE_IN_DMAC, block_ts, SMMU_PAGE_IN_DMAC_AWLEN,
+		      SMMU_PAGE_IN_DMAC_ARLEN);
+	cfg_dmac_inst(SMMU_PAGE_OUT_DMAC, block_ts, SMMU_PAGE_OUT_DMAC_AWLEN,
+		      SMMU_PAGE_OUT_DMAC_ARLEN);
+
+	/* The APB path has to be closed again before issuing paging commands. */
+	sys_write32(0, SMMU_PAGE_CMD_CTRL);
+}
+
 __imr void smmu_boot_mem_map(void)
 {
 	/*
@@ -382,6 +536,8 @@ __imr void smmu_boot_mem_map(void)
 
 	uintptr_t virt_start = VECBASE_RESET_PADDR_SRAM;
 	uintptr_t virt_end = RAM_BASE + RAM_SIZE;
+
+	configure_dmacs();
 
 	for (uintptr_t addr = virt_start; addr < virt_end; addr += SMMU_PAGE_SIZE) {
 		enum smmu_page_map_state page_state = get_page_mapped_state(addr);
