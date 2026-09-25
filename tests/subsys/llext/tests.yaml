@@ -18,6 +18,7 @@ common:
   extra_configs:
     - arch:arm64:CONFIG_LLEXT_HEAP_SIZE=128
     - arch:arm64:CONFIG_LLEXT_EXT_HEAP_SIZE=64
+    - CONFIG_LLEXT_LOG_LEVEL_DBG=y
   extra_conf_files:
     - prj.conf
   min_ram: 172                # Size on arm: max: 145, min: 79

@@ -15,6 +15,7 @@ on:
         default: 'main-intel'
         options:
           - all
+          - llext
           - main-intel
           - upstream
           - intel_adsp/cavs25

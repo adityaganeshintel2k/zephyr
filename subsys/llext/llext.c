@@ -261,6 +261,8 @@ int llext_load(struct llext_loader *ldr, const char *name, struct llext **ext,
 		goto out;
 	}
 
+	LOG_INF("Extension metadata size %d", sizeof(struct llext));
+
 	ret = do_llext_load(ldr, *ext, ldr_parm);
 	if (ret < 0) {
 		llext_free_metadata(*ext);
