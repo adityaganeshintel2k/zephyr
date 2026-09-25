@@ -54,6 +54,7 @@ on:
         options:
           - acceptance
           - smoke
+          - llext
           - hw_validation
           - hw_validation_extended
       debug:
@@ -99,7 +100,7 @@ on:
 jobs:
   run-workflow-dispatch:
     name: '${{ inputs.commit-sha }} - workflow dispatch hwtest'
-    uses: intel-innersource/os.rtos.zephyr.zephyr-intel/.github/workflows/intel_hwtest_reusable.yml@main-intel
+    uses: intel-innersource/os.rtos.zephyr.zephyr-intel/.github/workflows/intel_hwtest_reusable.yml@ganesh-ad-llext-custom-wf
     with:
       CONCURRENCY_GROUP_NAME: '${{ github.workflow_ref }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}-hwtest-dispatch'
       TARGET_GROUP: '${{ inputs.target }}'
