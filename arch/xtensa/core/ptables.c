@@ -1300,6 +1300,10 @@ static uint32_t *dup_l2_table(uint32_t *src_l2_table, enum dup_action action)
 		break;
 	}
 
+	if (IS_ENABLED(PAGE_TABLE_IS_CACHED)) {
+		sys_cache_data_flush_range((void *)l2_table, L2_PAGE_TABLE_SIZE);
+	}
+
 	return l2_table;
 }
 
@@ -1406,8 +1410,9 @@ static uint32_t *dup_l1_table(void)
  */
 static bool dup_l2_table_if_needed(uint32_t *l1_table, uint32_t l1_pos, enum dup_action action)
 {
-	uint32_t *l2_table, *src_l2_table;
-	k_spinlock_key_t key;
+	uint32_t *l2_table, *src_l2_table;	
+    
+    k_spinlock_key_t key;
 
 	src_l2_table = (uint32_t *)PTE_PPN_GET(l1_table[l1_pos]);
 
@@ -1433,8 +1438,6 @@ static bool dup_l2_table_if_needed(uint32_t *l1_table, uint32_t l1_pos, enum dup
 	l2_page_tables_counter_dec(src_l2_table);
 
 	k_spin_unlock(&xtensa_counter_lock, key);
-
-	sys_cache_data_flush_range((void *)l2_table, L2_PAGE_TABLE_SIZE);
 
 	return true;
 }
