@@ -14,7 +14,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/llext/symbol.h>
 #include <zephyr/ztest_assert.h>
-
+#include <zephyr/ztest_error_hook.h>
 /*
  * Create constants requesting a specific alignment in memory and with a value
  * that is related but not equal to their alignment requirement.
@@ -53,6 +53,21 @@ ALIGNED_SECT_ENTRY(independent, 512);
 
 void test_entry(void)
 {
+
+	int a = 10;
+
+	int* ptr = &a;
+
+	printk("Address of a: %p\n", (void*)ptr);
+
+	ptr = NULL;
+
+	ztest_set_fault_valid(true);
+
+	int saved = *ptr;
+
+	printk("So that compiler does not optimize the saved variable %d \n",saved);
+
 	ASSERT_ENTRY(common, 8);
 	ASSERT_ENTRY(common, 16);
 	ASSERT_ENTRY(common, 32);
