@@ -139,6 +139,18 @@ bool xtensa_is_frame_pointer_valid(_xtensa_irq_stack_frame_raw_t *frame)
 	return true;
 }
 
+bool xtensa_exception_get_pc(const struct arch_esf *esf, uintptr_t *pc)
+{
+	const _xtensa_irq_stack_frame_raw_t *frame = (const void *)esf;
+
+	if (!esf || !pc || !xtensa_is_frame_pointer_valid((_xtensa_irq_stack_frame_raw_t *)frame)) {
+		return false;
+	}
+
+	*pc = frame->ptr_to_bsa->pc;
+	return true;
+}
+
 void xtensa_dump_stack(const void *stack)
 {
 	_xtensa_irq_stack_frame_raw_t *frame = (void *)stack;

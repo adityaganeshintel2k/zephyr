@@ -8,6 +8,7 @@
 #ifndef ZEPHYR_ARCH_XTENSA_INCLUDE_XTENSA_INTERNAL_H_
 #define ZEPHYR_ARCH_XTENSA_INCLUDE_XTENSA_INTERNAL_H_
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include <zephyr/arch/xtensa/exception.h>
@@ -44,6 +45,17 @@ char *xtensa_exccause(unsigned int cause_code);
  *            state when the error occurred. May in some cases be NULL.
  */
 void xtensa_fatal_error(unsigned int reason, const struct arch_esf *esf);
+
+/**
+ * @brief Retrieve the interrupted PC from a validated exception frame.
+ *
+ * @param esf Exception context, which may be NULL or invalid.
+ * @param pc Output location for the interrupted PC.
+ *
+ * @retval true The frame was valid and @p pc was populated.
+ * @retval false The frame was unavailable or invalid.
+ */
+bool xtensa_exception_get_pc(const struct arch_esf *esf, uintptr_t *pc);
 
 /**
  * @brief Perform a one-way transition from supervisor to user mode.
