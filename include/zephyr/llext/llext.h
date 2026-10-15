@@ -168,6 +168,34 @@ struct llext {
 };
 
 /**
+ * @brief Test whether an instruction address lies in a half-open executable range.
+ *
+ * This function does not access extension metadata or take a lock, so callers
+ * can use it with an application-managed runtime text mapping.
+ */
+bool llext_pc_in_region(uintptr_t pc, uintptr_t start, size_t size);
+
+/**
+ * @brief Find the loaded extension containing an instruction address.
+ *
+ * Searches the LLEXT-managed text (and veneer, if enabled) regions. The
+ * extension name is copied while the loader list is locked, so it remains
+ * valid after the call returns. Applications that map extension code at
+ * addresses other than the loader-owned regions should use
+ * @ref llext_pc_in_region with their active runtime mappings instead.
+ * This function must only be called in supervisor thread context, not from
+ * an exception handler or ISR.
+ *
+ * @param pc Instruction address to locate.
+ * @param name Output buffer of at least LLEXT_MAX_NAME_LEN + 1 bytes.
+ *
+ * @retval 0 A loaded extension was found.
+ * @retval -ENOENT No loaded extension contains @p pc.
+ * @retval -EINVAL @p name is NULL.
+ */
+int llext_find_by_pc(uintptr_t pc, char name[LLEXT_MAX_NAME_LEN + 1]);
+
+/**
  * @brief Get the ELF section headers of an extension.
  *
  * The section headers are only available if the extension was loaded with

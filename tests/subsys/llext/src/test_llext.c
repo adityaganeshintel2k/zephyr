@@ -283,6 +283,41 @@ LLEXT_LOAD_UNLOAD(hello_world,
 	.kernel_only = true
 )
 
+ZTEST(llext, test_find_by_pc)
+{
+	struct llext_buf_loader buf_loader =
+		LLEXT_BUF_LOADER(hello_world_ext, sizeof(hello_world_ext));
+	struct llext_loader *loader = &buf_loader.loader;
+	struct llext_load_param params = LLEXT_LOAD_PARAM_DEFAULT;
+	struct llext *ext = NULL;
+	char name[LLEXT_MAX_NAME_LEN + 1] = "unchanged";
+	uintptr_t text;
+	size_t size;
+
+	zassert_true(llext_pc_in_region(0x1000, 0x1000, 0x100));
+	zassert_true(llext_pc_in_region(0x10ff, 0x1000, 0x100));
+	zassert_false(llext_pc_in_region(0x1100, 0x1000, 0x100));
+	zassert_false(llext_pc_in_region(0xfff, 0x1000, 0x100));
+	zassert_false(llext_pc_in_region(0x1000, 0x1000, 0));
+	zassert_true(llext_pc_in_region(UINTPTR_MAX, UINTPTR_MAX - 1, 2));
+
+	zassert_equal(llext_find_by_pc(0, NULL), -EINVAL);
+	zassert_ok(llext_load(loader, "pc_lookup", &ext, &params));
+	text = (uintptr_t)ext->mem[LLEXT_MEM_TEXT];
+	size = ext->mem_size[LLEXT_MEM_TEXT];
+	zassert_true(size > 0);
+
+	zassert_ok(llext_find_by_pc(text, name));
+	zassert_str_equal(name, "pc_lookup");
+	zassert_ok(llext_find_by_pc(text + size - 1, name));
+	zassert_equal(llext_find_by_pc(text + size, name), -ENOENT);
+	zassert_equal(llext_find_by_pc(text - 1, name), -ENOENT);
+	zassert_str_equal(name, "pc_lookup");
+
+	zassert_ok(llext_unload(&ext));
+	zassert_equal(llext_find_by_pc(text, name), -ENOENT);
+}
+
 /* When compiled with CCAC, init_fini's sections are unfixably out of order */
 #if !defined(CONFIG_LLEXT_TYPE_ELF_SHAREDLIB) && !defined(__CCAC__)
 static LLEXT_CONST uint8_t init_fini_ext[] LLEXT_SECT ELF_ALIGN = {

@@ -25,6 +25,39 @@ sys_slist_t llext_list = SYS_SLIST_STATIC_INIT(&llext_list);
 
 K_MUTEX_DEFINE(llext_lock);
 
+bool llext_pc_in_region(uintptr_t pc, uintptr_t start, size_t size)
+{
+	return size != 0 && pc >= start && pc - start < size;
+}
+
+int llext_find_by_pc(uintptr_t pc, char name[LLEXT_MAX_NAME_LEN + 1])
+{
+	if (name == NULL) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&llext_lock, K_FOREVER);
+
+	struct llext *ext;
+
+	SYS_SLIST_FOR_EACH_CONTAINER(&llext_list, ext, llext_list) {
+		if (llext_pc_in_region(pc, (uintptr_t)ext->mem[LLEXT_MEM_TEXT],
+				       ext->mem_size[LLEXT_MEM_TEXT])
+#ifdef CONFIG_LLEXT_VENEERS
+		    || llext_pc_in_region(pc, (uintptr_t)ext->mem[LLEXT_MEM_VENEER],
+					  ext->mem_size[LLEXT_MEM_VENEER])
+#endif
+		   ) {
+			memcpy(name, ext->name, sizeof(ext->name));
+			k_mutex_unlock(&llext_lock);
+			return 0;
+		}
+	}
+
+	k_mutex_unlock(&llext_lock);
+	return -ENOENT;
+}
+
 int llext_section_shndx(const struct llext_loader *ldr, const struct llext *ext,
 			const char *sect_name)
 {
