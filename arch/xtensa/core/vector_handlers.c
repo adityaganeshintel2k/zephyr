@@ -151,6 +151,35 @@ bool xtensa_exception_get_pc(const struct arch_esf *esf, uintptr_t *pc)
 	return true;
 }
 
+bool xtensa_exception_is_user(const struct arch_esf *esf)
+{
+#ifdef CONFIG_USERSPACE
+	const _xtensa_irq_stack_frame_raw_t *frame = (const void *)esf;
+	uint32_t user_ring;
+	uint32_t ps;
+
+	if ((esf == NULL) || (_current == NULL) || (arch_curr_cpu()->nested != 1U) ||
+	    ((_current->base.user_options & K_USER) == 0U) ||
+	    !xtensa_is_frame_pointer_valid((_xtensa_irq_stack_frame_raw_t *)frame)) {
+		return false;
+	}
+
+#if defined(CONFIG_XTENSA_MMU)
+	user_ring = PS_RING(2);
+#elif defined(CONFIG_XTENSA_MPU)
+	user_ring = PS_RING(1);
+#else
+	return false;
+#endif
+
+	ps = frame->ptr_to_bsa->ps;
+	return (ps & (PS_RING_MASK | PS_EXCM_MASK | PS_INTLEVEL_MASK)) == user_ring;
+#else
+	ARG_UNUSED(esf);
+	return false;
+#endif
+}
+
 void xtensa_dump_stack(const void *stack)
 {
 	_xtensa_irq_stack_frame_raw_t *frame = (void *)stack;

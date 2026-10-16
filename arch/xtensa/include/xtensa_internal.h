@@ -58,6 +58,16 @@ void xtensa_fatal_error(unsigned int reason, const struct arch_esf *esf);
 bool xtensa_exception_get_pc(const struct arch_esf *esf, uintptr_t *pc);
 
 /**
+ * @brief Check whether a validated fatal exception interrupted a user thread in user mode.
+ *
+ * @param esf Exception context, which may be NULL or invalid.
+ *
+ * @retval true A first-level exception interrupted the configured user protection ring.
+ * @retval false The context is privileged, nested, inconsistent, or unavailable.
+ */
+bool xtensa_exception_is_user(const struct arch_esf *esf);
+
+/**
  * @brief Perform a one-way transition from supervisor to user mode.
  *
  * @see arch_user_mode_enter
