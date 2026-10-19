@@ -220,6 +220,54 @@ void xtensa_dump_stack(const void *stack)
 #endif
 }
 
+bool xtensa_exception_is_user(const struct arch_esf *esf)
+{
+#ifdef CONFIG_USERSPACE
+	const _xtensa_irq_stack_frame_raw_t *frame = (const void *)esf;
+	uint32_t user_ring;
+	uint32_t ps;
+
+	//uint32_t nested = arch_curr_cpu()->nested;
+	uint16_t user_options = _current->base.user_options;
+
+	printk("user options: %u\n", user_options);
+
+	bool frame_pointer_valid = xtensa_is_frame_pointer_valid((_xtensa_irq_stack_frame_raw_t *)frame);
+
+	printk("frame pointer valid %d\n",frame_pointer_valid);
+
+	if ((esf == NULL) || (_current == NULL) || (arch_curr_cpu()->nested != 1U) ||
+	    ((user_options & K_USER) == 0U) || (!frame_pointer_valid)) {
+		return false;
+	}
+
+#if defined(CONFIG_XTENSA_MMU)
+	user_ring = PS_RING(2);
+#elif defined(CONFIG_XTENSA_MPU)
+	user_ring = PS_RING(1);
+#else
+	return false;
+#endif
+
+	printk("user ring: %u\n", user_ring);
+
+	ps = frame->ptr_to_bsa->ps;
+
+	printk("saved PS=0x%08x ring=%u EXCM=%u INTLEVEL=%u masked=0x%02x expected=0x%02x\n",
+       (unsigned int)ps,
+       (unsigned int)((ps & PS_RING_MASK) >> PS_RING_SHIFT),
+       (unsigned int)((ps & PS_EXCM_MASK) >> PS_EXCM_SHIFT),
+       (unsigned int)(ps & PS_INTLEVEL_MASK),
+       (unsigned int)(ps & (PS_RING_MASK | PS_EXCM_MASK | PS_INTLEVEL_MASK)),
+       (unsigned int)user_ring);
+
+	return (ps & (PS_RING_MASK | PS_EXCM_MASK)) == user_ring;
+#else
+	ARG_UNUSED(esf);
+	return false;
+#endif
+}
+
 static inline unsigned int get_bits(int offset, int num_bits, unsigned int val)
 {
 	int mask;

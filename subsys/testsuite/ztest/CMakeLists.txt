@@ -17,6 +17,10 @@ endif()
 
 zephyr_library()
 
+if(CONFIG_XTENSA AND CONFIG_USERSPACE AND CONFIG_ZTEST_FATAL_HOOK)
+  zephyr_library_include_directories(${ARCH_DIR}/${ARCH}/include)
+endif()
+
 # For strtok_r() and strdup()
 zephyr_library_compile_options(-U_POSIX_C_SOURCE -D_POSIX_C_SOURCE=200809L)
 

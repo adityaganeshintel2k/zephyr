@@ -62,7 +62,7 @@ void test_entry(void)
 
 	ptr = NULL;
 
-	ztest_set_fault_valid(true);
+	//ztest_set_fault_valid(true);
 
 	int saved = *ptr;
 

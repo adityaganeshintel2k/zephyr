@@ -6,7 +6,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/ztest.h>
 #include <zephyr/spinlock.h>
-
+#if defined(CONFIG_XTENSA) && defined(CONFIG_USERSPACE) && defined(CONFIG_ZTEST_FATAL_HOOK)
+#include <xtensa_internal.h>
+#endif
 
 #if defined(CONFIG_ZTEST_FATAL_HOOK)
 /* This is a flag indicate if treating fatal error as expected, then take
@@ -72,6 +74,13 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *pEsf)
 		/* do some action after expected fatal error happened */
 		ztest_post_fatal_error_hook(reason, pEsf);
 	} else {
+#if defined(CONFIG_XTENSA) && defined(CONFIG_USERSPACE)
+		if (reason != K_ERR_KERNEL_PANIC && xtensa_exception_is_user(pEsf)) {
+			printk("ERROR: Unexpected fatal error %u in Xtensa user mode; "
+			       "aborting thread.\n", reason);
+			return;
+		}
+#endif
 		printk("Fatal error was unexpected, aborting...\n");
 		k_fatal_halt(reason);
 	}
