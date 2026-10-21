@@ -330,10 +330,6 @@ void llext_adjust_mmu_permissions(struct llext *ext)
 #endif
 			flags = K_MEM_PERM_EXEC;
 
-			k_mem_update_flags(addr, size, flags);
-
-			sys_cache_instr_invd_range(addr, size);
-
 			break;
 		case LLEXT_MEM_DATA:
 		case LLEXT_MEM_BSS:
@@ -346,13 +342,16 @@ void llext_adjust_mmu_permissions(struct llext *ext)
 			continue;
 		}
 		sys_cache_data_flush_range(addr, size);
+
+		k_mem_update_flags(addr, size, flags);
+
 		if ((flags & K_MEM_PERM_EXEC) != 0) {
 			/* new code must reach PoU (flush above) before the
 			 * stale instruction lines are dropped
 			 */
 			sys_cache_instr_invd_range(addr, size);
 		}
-		k_mem_update_flags(addr, size, flags);
+
 	}
 
 	ext->mmu_permissions_set = true;
