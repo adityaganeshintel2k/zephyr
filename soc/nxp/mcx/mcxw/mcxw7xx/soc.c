@@ -10,6 +10,7 @@
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/linker/sections.h>
+#include <zephyr/logging/log.h>
 
 #include <soc.h>
 
@@ -17,6 +18,8 @@
 #include <fsl_common.h>
 #include <fsl_clock.h>
 #include <fsl_cmc.h>
+
+LOG_MODULE_REGISTER(soc, CONFIG_SOC_LOG_LEVEL);
 
 #define MCXW7_CMC_ADDR (CMC_Type *)DT_REG_ADDR(DT_INST(0, nxp_cmc))
 
@@ -99,6 +102,26 @@ void soc_early_init_hook(void)
 	/* disable interrupts */
 	oldLevel = irq_lock();
 
+#if defined(CONFIG_SOC_MCXW727C)
+	/* Open TRDC access to the peripherals this SoC uses before any of the
+	 * register accesses below. MCXW72-only (per-NPI MBC layout differs).
+	 *
+	 * This runs as early as Zephyr can reach: soc_reset_hook and SystemInit
+	 * have already executed by this point, and SystemInit, unconditionally
+	 * writes SPC0 (glitch-detect config) and, when DISABLE_WDOG is set, WDOG0.
+	 * Zephyr cannot program TRDC before those accesses because its own boot code
+	 * must already be fetching from code flash and running from the ECC TCM
+	 * banks to get here.
+	 *
+	 * Handoff for a TRDC-locked Sentinel boot: Sentinel must pre-grant the
+	 * minimal blocks the pre-hook path touches - code flash (execution),
+	 * the ECC TCM RAM banks, SPC0 and WDOG0 - before it starts this image.
+	 * nxp_mcxw72_trdc_init() then opens the full peripheral set the kernel
+	 * and enabled drivers need for the rest of boot.
+	 */
+	nxp_mcxw72_trdc_init();
+#endif
+
 #ifdef CONFIG_SOC_MCXW70AC
 	/* This is temporarily placed in the SoC layer.
 	 * Once TSTMR support is available, this logic should be moved to the
@@ -133,6 +156,11 @@ static int soc_nbu_init(void)
 #if !defined(CONFIG_TRUSTED_EXECUTION_NONSECURE)
 #if defined(CONFIG_NXP_NBU)
 	nxp_nbu_init();
+#elif defined(CONFIG_PM) && defined(CONFIG_SOC_MCXW70AC)
+	/* Hold the NBU CM3 in reset as not used. The radio domain low-power entry
+	 * is requested for each low-power state in pm_state_set().
+	 */
+	RFMC->RF2P4GHZ_CTRL |= RFMC_RF2P4GHZ_CTRL_CPU_RST_MASK;
 #elif defined(CONFIG_PM)
 	/* Shutdown NBU as not used */
 

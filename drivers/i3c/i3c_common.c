@@ -50,7 +50,7 @@ void i3c_addr_slots_set(struct i3c_addr_slots *slots, uint8_t dev_addr,
 	bitpos %= BITS_PER_LONG;
 
 	slots->slots[idx] &= ~((unsigned long)I3C_ADDR_SLOT_STATUS_MASK << bitpos);
-	slots->slots[idx] |= status << bitpos;
+	slots->slots[idx] |= (unsigned long)status << bitpos;
 }
 
 enum i3c_addr_slot_status i3c_addr_slots_status(struct i3c_addr_slots *slots, uint8_t dev_addr)
@@ -1490,14 +1490,6 @@ int i3c_bus_init(const struct device *dev, const struct i3c_dev_list *dev_list)
 		LOG_DBG("Broadcast RSTDAA was NACK.");
 	}
 
-	/* Set previously stored OD high period back */
-	ctrl_cfg.scl_od_min.high_ns = prev_od_high_ns;
-	ret = i3c_configure_controller(dev, &ctrl_cfg);
-	if (ret != 0) {
-		LOG_ERR("%s: Open Drain Normal speed set failed", dev->name);
-		return ret;
-	}
-
 	/*
 	 * Disable all events from targets to avoid them
 	 * interfering with bus initialization,
@@ -1548,6 +1540,14 @@ int i3c_bus_init(const struct device *dev, const struct i3c_dev_list *dev_list)
 				LOG_ERR("DAA was not successful.");
 			}
 		}
+	}
+
+	/* Restore the configured OD high period now that addressing is done */
+	ctrl_cfg.scl_od_min.high_ns = prev_od_high_ns;
+	ret = i3c_configure_controller(dev, &ctrl_cfg);
+	if (ret != 0) {
+		LOG_ERR("%s: Open Drain Normal speed set failed", dev->name);
+		return ret;
 	}
 
 	/*

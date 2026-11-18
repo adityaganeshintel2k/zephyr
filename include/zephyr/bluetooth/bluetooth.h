@@ -60,7 +60,7 @@ extern "C" {
  *
  * @defgroup bt_gap Generic Access Profile (GAP)
  * @since 1.0
- * @version 1.0.0
+ * @version 1.1.2
  * @ingroup bluetooth
  * @{
  */
@@ -349,6 +349,9 @@ typedef void (*bt_ready_cb_t)(int err);
  * @retval -EALREADY Bluetooth is already enabled, or being enabled.
  * @retval -EAGAIN Bluetooth is being disabled; retry once bt_disable() has returned.
  * @retval -ENODEV The HCI driver is not ready.
+ * @retval -ETIMEDOUT The Controller did not respond to any command. The HCI transport is
+ *         closed, so bt_enable() can be called again without bt_disable(). With a @p cb,
+ *         the callback gets this error.
  */
 int bt_enable(bt_ready_cb_t cb);
 
@@ -373,7 +376,13 @@ int bt_enable(bt_ready_cb_t cb);
  *
  * Close and release HCI resources. Result is architecture dependent.
  *
+ * If the HCI driver fails to close its transport, the error is returned with
+ * Bluetooth left not ready, as the Host has torn down its state, connections
+ * included, by then. bt_disable() can be called again.
+ *
  * @return 0 on success, negative errno value on failure.
+ * @retval -ENOSYS The HCI driver does not support closing its transport. Bluetooth is
+ *                 left as it was.
  * @retval -EALREADY Bluetooth is already disabled, or being disabled.
  * @retval -EAGAIN Bluetooth is still being enabled, which with @kconfig{CONFIG_BT_SETTINGS}
  *                 includes loading the Bluetooth settings; retry once bt_is_ready() returns true.
@@ -495,7 +504,7 @@ void bt_id_get(bt_addr_le_t *addrs, size_t *count);
  *             to BT_ADDR_LE_ANY the stack will generate a new random static address
  *             for the identity address and copy it to the given parameter upon return
  *             from this function (in case the parameter was non-NULL).
- * @param irk  Identity Resolving Key (16 octets) to be used with this
+ * @param irk  Identity Resolving Key (@ref BT_IRK_SIZE octets) to be used with this
  *             identity address. If set to all zeroes or NULL, the stack will
  *             generate a random IRK for the identity address and copy it back
  *             to the parameter upon return from this function (in case
@@ -523,7 +532,7 @@ int bt_id_create(bt_addr_le_t *addr, uint8_t *irk);
  *             to BT_ADDR_LE_ANY the stack will generate a new static random
  *             address for the identity address and copy it to the given
  *             parameter upon return from this function.
- * @param irk  Identity Resolving Key (16 octets) to be used with this
+ * @param irk  Identity Resolving Key (@ref BT_IRK_SIZE octets) to be used with this
  *             identity address. If set to all zeroes or NULL, the stack will
  *             generate a random IRK for the identity address and copy it back
  *             to the parameter upon return from this function (in case
@@ -552,6 +561,45 @@ int bt_id_reset(uint8_t id, bt_addr_le_t *addr, uint8_t *irk);
  * @return 0 in case of success, or a negative error code on failure.
  */
 int bt_id_delete(uint8_t id);
+
+/**
+ * @brief Reset the local Identity Resolving Key (IRK) for an identity.
+ *
+ * Replaces the IRK for the given identity and persists it to flash when
+ * @kconfig{CONFIG_BT_SETTINGS} is enabled. Existing bonds must be removed
+ * before calling this function because bonded peers retain the old IRK and
+ * cannot resolve RPAs generated with the new one. Without
+ * @kconfig{CONFIG_BT_SETTINGS}, the new IRK is lost on reboot.
+ *
+ * @note Unlike @ref bt_id_reset, this function also accepts
+ *       @ref BT_ID_DEFAULT because it does not modify the identity address.
+ *
+ * @kconfig_dep{CONFIG_BT_PRIVACY}.
+ *
+ * @note The Bluetooth stack must be enabled via @ref bt_enable before calling
+ *       this function.
+ *
+ * @note With extended advertising, an advertising set assigned to this identity
+ *       must be deleted before calling this function; stopping it is not enough.
+ *
+ * @param id  Identity index, as returned by @ref bt_id_get or @ref BT_ID_DEFAULT.
+ *            Must be less than the number of currently configured identities.
+ * @param[in,out] irk Identity Resolving Key (@ref BT_IRK_SIZE octets) to use for the identity.
+ *                    If NULL or all zeroes, the stack generates a new random
+ *                    IRK and copies it back to this buffer when non-NULL.
+ *
+ * @retval 0           Success.
+ * @retval -EAGAIN     Bluetooth stack is not ready.
+ * @retval -EINVAL     @p id is out of range.
+ * @retval -EALREADY   The identity slot is empty.
+ * @retval -EBUSY      An advertising set is active, the identity is used by
+ *                     scanning or initiating, or a created extended advertising
+ *                     set is assigned to the identity.
+ * @retval -ENOTEMPTY  Bonds exist for this identity; call @ref bt_unpair first.
+ * @retval -EIO        Random IRK generation failed.
+ * @retval -ENOTSUP    Random generation is unsupported.
+ */
+int bt_id_reset_irk(uint8_t id, uint8_t *irk);
 
 /**
  * @brief Local Bluetooth LE controller features and capabilities.
@@ -810,6 +858,10 @@ enum bt_le_adv_opt {
 	 * @kconfig{CONFIG_BT_EXT_ADV} instead.
 	 *
 	 * @note Mutually exclusive with BT_LE_ADV_OPT_USE_IDENTITY.
+	 *
+	 * @note With @kconfig{CONFIG_BT_PRIVACY} and the legacy advertising
+	 *       commands, scanning uses the same NRPA, and connection creation
+	 *       fails while the advertiser is enabled.
 	 */
 	BT_LE_ADV_OPT_USE_NRPA = BIT(19),
 
@@ -2578,7 +2630,8 @@ struct bt_le_scan_recv_info {
 	 * Controller resolved while scanning with the legacy scanning commands.
 	 *
 	 * The address type is @ref BT_ADDR_LE_UNRESOLVED if the Controller was unable to
-	 * resolve it.
+	 * resolve it. Use bt_addr_matches_irk() to check such an address against an IRK the
+	 * application holds.
 	 */
 	const bt_addr_le_t *direct_addr;
 };
@@ -2930,6 +2983,7 @@ struct bt_le_oob {
  *         different local identity address.
  *       - The local identity address conflicts with the local identity address used by other
  *         roles.
+ *       - Advertiser is enabled with @ref BT_LE_ADV_OPT_USE_NRPA.
  *
  * @note This function randomly generates cryptographic material used in the pairing process, and
  *       should be called again for each new pairing process.

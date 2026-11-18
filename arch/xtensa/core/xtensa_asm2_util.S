@@ -12,6 +12,18 @@
 #endif
 
 /*
+ * xtensa_triple_fault_breadcrumb - record triple fault state for host diagnosis.
+ *
+ * Weak default is a no-op. SoC families that support it link in a strong
+ * override, so the shared vector code stays free of per-SoC #ifdefs.
+ * Called via CALL0; may clobber a2/a3/a4.
+ */
+.weak xtensa_triple_fault_breadcrumb
+.align 4
+xtensa_triple_fault_breadcrumb:
+	ret
+
+/*
  * xtensa_spill_reg_windows
  *
  * Spill all register windows.  Not a C function, enter this via CALL0
@@ -456,7 +468,8 @@ DEF_EXCINT XCHAL_NMILEVEL, _handle_excint, xtensa_nmi_c
 DEF_EXCINT XCHAL_DEBUGLEVEL, _handle_excint, xtensa_debugint_c
 #endif
 
-#ifdef CONFIG_XTENSA_EMULATE_UNSUPPORTED_UNSIGNED_LOAD_STORE
+#if defined(CONFIG_XTENSA_EMULATE_UNSUPPORTED_UNSIGNED_LOAD_STORE) || \
+	defined(CONFIG_XTENSA_SMALL_VECTOR_TABLE_ENTRY)
 #include "emulate_load_store.S"
 .pushsection .iram.text, "ax"
 _Level1RealVectorExtended:
@@ -466,7 +479,7 @@ _Level1RealVectorExtended:
  * caller function of the code that took the exception, and that can't
  * be done in C).  A prototype exists which mucks with the stack frame
  * from the C handler instead, but that would add a LARGE overhead to
- * some alloca() calls (those whent he caller has been spilled) just
+ * some alloca() calls (those when the caller has been spilled) just
  * to save these five cycles during other exceptions and L1
  * interrupts.  Maybe revisit at some point, with better benchmarking.
  * Note that _xt_alloca_exc is Xtensa-authored code which expects A0
@@ -476,7 +489,9 @@ _Level1RealVectorExtended:
 .pushsection .UserExceptionVector.text, "ax"
 .global _Level1RealVector
 _Level1RealVector:
-#endif /* CONFIG_XTENSA_EMULATE_UNSUPPORTED_UNSIGNED_LOAD_STORE */
+#endif /* defined(CONFIG_XTENSA_EMULATE_UNSUPPORTED_UNSIGNED_LOAD_STORE) || \
+	* defined(CONFIG_XTENSA_SMALL_VECTOR_TABLE_ENTRY)
+	*/
 	wsr a0, ZSR_A0SAVE
 	rsync
 	rsr.exccause a0
@@ -544,13 +559,16 @@ _syscall:
 #endif /* CONFIG_USERSPACE */
 .popsection
 
-#if defined(CONFIG_XTENSA_EMULATE_UNSUPPORTED_UNSIGNED_LOAD_STORE)
+#if defined(CONFIG_XTENSA_EMULATE_UNSUPPORTED_UNSIGNED_LOAD_STORE) || \
+	defined(CONFIG_XTENSA_SMALL_VECTOR_TABLE_ENTRY)
 .pushsection .UserExceptionVector.text, "ax"
 .global _Level1RealVector
 _Level1RealVector:
 	j _Level1RealVectorExtended
 .popsection
-#endif /* CONFIG_XTENSA_EMULATE_UNSUPPORTED_UNSIGNED_LOAD_STORE */
+#endif /* defined(CONFIG_XTENSA_EMULATE_UNSUPPORTED_UNSIGNED_LOAD_STORE) || \
+	* defined(CONFIG_XTENSA_SMALL_VECTOR_TABLE_ENTRY)
+	*/
 
 /* In theory you can have levels up to 15, but known hardware only uses 7. */
 #if XCHAL_NMILEVEL > 7
@@ -632,6 +650,7 @@ _TripleFault:
 	movi a2, SYS_exit
 	simcall
 #endif
+	call0 xtensa_triple_fault_breadcrumb
 1:
 	j	1b
 

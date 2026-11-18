@@ -865,12 +865,11 @@ int bt_has_client_discover(struct bt_conn *conn)
 		goto cleanup;
 	}
 
-	inst->conn = ref;
+	inst->conn = bt_conn_take(&ref);
 
 	err = features_discover(inst);
 	if (err != 0) {
-		bt_conn_unref(inst->conn);
-		inst->conn = NULL;
+		bt_conn_drop(&inst->conn);
 		goto cleanup;
 	}
 
@@ -1003,10 +1002,15 @@ int bt_has_client_preset_prev(struct bt_has *has, bool sync)
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
-	struct bt_has_client *inst = inst_by_conn(conn);
+	struct bt_has_client *inst;
 
 	ARG_UNUSED(reason);
 
+	if (!bt_conn_is_type(conn, BT_CONN_TYPE_LE)) {
+		return;
+	}
+
+	inst = inst_by_conn(conn);
 	if (!inst) {
 		return;
 	}

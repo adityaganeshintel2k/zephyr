@@ -35,7 +35,6 @@ enum bt_keys_type {
 
 enum {
 	BT_KEYS_ID_PENDING_ADD = BIT(0),
-	BT_KEYS_ID_PENDING_DEL = BIT(1),
 	BT_KEYS_ID_ADDED = BIT(2),
 };
 
@@ -115,6 +114,8 @@ struct bt_keys {
  * Keys stored in settings are not cleared.
  */
 void bt_keys_reset(void);
+
+bool bt_keys_has_bond(uint8_t id);
 
 /**
  * @brief Get a call through the callback for each key with the same type

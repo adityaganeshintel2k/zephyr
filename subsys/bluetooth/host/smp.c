@@ -39,7 +39,6 @@
 
 #include "conn_internal.h"
 #include "common/bt_str.h"
-#include "common/rpa.h"
 #include "crypto/bt_crypto.h"
 #include "ecc.h"
 #include "hci_core.h"
@@ -195,17 +194,17 @@ struct bt_smp {
 	/* MacKey */
 	uint8_t				mackey[16];
 
-	/* LE SC passkey */
-	uint32_t				passkey;
-
-	/* LE SC passkey round */
-	uint8_t				passkey_round;
-
 	/* LE SC local OOB data */
 	const struct bt_le_oob_sc_data	*oobd_local;
 
 	/* LE SC remote OOB data */
 	const struct bt_le_oob_sc_data	*oobd_remote;
+
+	/* LE SC passkey */
+	uint32_t				passkey;
+
+	/* LE SC passkey round */
+	uint8_t				passkey_round;
 
 	/* Local key distribution */
 	uint8_t				local_dist;
@@ -1535,7 +1534,7 @@ static void convert_to_id_on_irk_match(struct bt_conn *conn, void *data)
 		return;
 	}
 
-	if (bt_rpa_irk_matches(keys->irk.val, &conn->le.dst.a)) {
+	if (bt_addr_matches_irk(&conn->le.dst.a, keys->irk.val)) {
 		if (conn->le.keys != NULL && conn->le.keys != keys) {
 			bt_keys_clear(conn->le.keys);
 		}
@@ -2873,10 +2872,18 @@ static uint8_t smp_central_ident(struct bt_smp *smp, struct net_buf *buf)
 
 static int smp_init(struct bt_smp *smp)
 {
+	/* SMP_FLAG_SEC_REQ is claimed before this runs and has to stay set for
+	 * the whole procedure, so the flags are cleared without ever dropping
+	 * it.
+	 */
+	(void)atomic_and(smp->flags, BIT(SMP_FLAG_SEC_REQ));
+
 	/* Initialize SMP context excluding L2CAP channel context and anything
 	 * else declared after.
 	 */
-	(void)memset(smp, 0, offsetof(struct bt_smp, chan));
+	(void)memset(smp, 0, offsetof(struct bt_smp, flags));
+	(void)memset(&smp->method, 0,
+		     offsetof(struct bt_smp, chan) - offsetof(struct bt_smp, method));
 
 	/* Generate local random number */
 	if (bt_rand(smp->prnd, 16)) {
@@ -3146,28 +3153,35 @@ static int smp_send_security_req(struct bt_conn *conn)
 		}
 	}
 
+	if (atomic_test_and_set_bit(smp->flags, SMP_FLAG_SEC_REQ)) {
+		return -EALREADY;
+	}
+
 	if (smp_init(smp) != 0) {
+		atomic_clear_bit(smp->flags, SMP_FLAG_SEC_REQ);
 		return -ENOBUFS;
 	}
 
 	req_buf = smp_create_pdu(smp, BT_SMP_CMD_SECURITY_REQUEST,
 				 sizeof(*req));
 	if (!req_buf) {
+		atomic_clear_bit(smp->flags, SMP_FLAG_SEC_REQ);
 		return -ENOBUFS;
 	}
 
 	req = net_buf_add(req_buf, sizeof(*req));
 	req->auth_req = get_auth(smp, BT_SMP_AUTH_DEFAULT);
 
+	atomic_set_bit(smp->allowed_cmds, BT_SMP_CMD_PAIRING_REQ);
+
 	/* SMP timer is not restarted for SecRequest so don't use smp_send */
 	err = bt_l2cap_send_pdu(&smp->chan, req_buf, NULL, NULL);
 	if (err) {
 		net_buf_unref(req_buf);
+		atomic_clear_bit(smp->flags, SMP_FLAG_SEC_REQ);
+		atomic_clear_bit(smp->allowed_cmds, BT_SMP_CMD_PAIRING_REQ);
 		return err;
 	}
-
-	atomic_set_bit(smp->flags, SMP_FLAG_SEC_REQ);
-	atomic_set_bit(smp->allowed_cmds, BT_SMP_CMD_PAIRING_REQ);
 
 	return 0;
 }
@@ -5066,13 +5080,17 @@ static void bt_smp_encrypt_change(struct bt_l2cap_chan *chan,
 			 */
 			atomic_set_bit(smp->flags, SMP_FLAG_DERIVE_LK);
 		}
-		/*
-		 * Those are used as pairing finished indicator so generated
-		 * but not distributed keys must be cleared here.
-		 */
-		smp->local_dist &= ~BT_SMP_DIST_LINK_KEY;
-		smp->remote_dist &= ~BT_SMP_DIST_LINK_KEY;
 	}
+
+	/*
+	 * Those are used as pairing finished indicator so generated
+	 * but not distributed keys must be cleared here. This applies to legacy
+	 * pairing too: a link key can only be derived from a Secure Connections
+	 * LTK, so the bit is never consumed there and would otherwise keep the
+	 * distribution set non-empty forever.
+	 */
+	smp->local_dist &= ~BT_SMP_DIST_LINK_KEY;
+	smp->remote_dist &= ~BT_SMP_DIST_LINK_KEY;
 
 	if (smp->remote_dist & BT_SMP_DIST_ENC_KEY) {
 		atomic_set_bit(smp->allowed_cmds, BT_SMP_CMD_ENCRYPT_INFO);
@@ -5334,36 +5352,6 @@ int bt_smp_sign(struct bt_conn *conn, struct net_buf *buf)
 	return -ENOTSUP;
 }
 #endif /* CONFIG_BT_SIGNING */
-
-static int smp_d1(const uint8_t *key, uint16_t d, uint16_t r, uint8_t res[16])
-{
-	int err;
-
-	LOG_DBG("key %s d %u r %u", bt_hex(key, 16), d, r);
-
-	sys_put_le16(d, &res[0]);
-	sys_put_le16(r, &res[2]);
-	memset(&res[4], 0, 16 - 4);
-
-	err = bt_encrypt_le(key, res, res);
-	if (err) {
-		return err;
-	}
-
-	LOG_DBG("res %s", bt_hex(res, 16));
-	return 0;
-}
-
-int bt_smp_irk_get(uint8_t *ir, uint8_t *irk)
-{
-	uint8_t invalid_ir[16] = { 0 };
-
-	if (!memcmp(ir, invalid_ir, 16)) {
-		return -EINVAL;
-	}
-
-	return smp_d1(ir, 1, 0, irk);
-}
 
 #if defined(CONFIG_BT_SMP_SELFTEST)
 /* Test vectors are taken from RFC 4493

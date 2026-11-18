@@ -251,6 +251,8 @@ static int stm32_sdmmc_configure_dma(DMA_HandleTypeDef *handle, struct sdmmc_dma
 	hal_dma_cfg.channel_direction = PERIPHERAL_TO_MEMORY;
 	hal_dma_cfg.source_data_size = 4U;
 	hal_dma_cfg.dest_data_size = 4U;
+	hal_dma_cfg.source_burst_length = 16U;
+	hal_dma_cfg.dest_burst_length = 16U;
 	ret = dma_stm32_zcfg_to_halcfg(dma->dev, &hal_dma_cfg, &handle->Init,
 				       DMA_ADDR_ADJ_NO_CHANGE, DMA_ADDR_ADJ_INCREMENT);
 	if (ret < 0) {
@@ -263,8 +265,6 @@ static int stm32_sdmmc_configure_dma(DMA_HandleTypeDef *handle, struct sdmmc_dma
 	handle->Init.Mode                = DMA_PFCTRL;
 	handle->Init.FIFOMode            = DMA_FIFOMODE_ENABLE;
 	handle->Init.FIFOThreshold       = DMA_FIFO_THRESHOLD_FULL;
-	handle->Init.MemBurst            = DMA_MBURST_INC4;
-	handle->Init.PeriphBurst         = DMA_PBURST_INC4;
 #else
 	BUILD_ASSERT(STM32_SDMMC_USE_DMA_SHARED == 1, "Only txrx is supported on this family");
 	/* handle->Init.Direction is not initialised here on purpose.
@@ -921,7 +921,7 @@ static void stm32_sdmmc_pwr_off(struct stm32_sdmmc_priv *priv)
 
 	/* PINCTRL sleep mode when powered down */
 	ret = pinctrl_apply_state(priv->pcfg, PINCTRL_STATE_SLEEP);
-	if (ret != 0 && ret != ENOTSUP) {
+	if (ret != 0 && ret != -ENOENT) {
 		LOG_WRN("Failed to configure pins for sleep (%d)", ret);
 	}
 	gpio_pin_configure_dt(&priv->pe, GPIO_OUTPUT_INACTIVE);
@@ -972,16 +972,16 @@ void stm32_sdmmc_get_card_csd(const struct device *dev, uint32_t csd[4])
 #if STM32_SDMMC_USE_DMA
 
 #define SDMMC_DMA_CHANNEL_INIT(dir, dir_cap)				\
-	.dev = DEVICE_DT_GET(STM32_DMA_CTLR(0, dir)),			\
+	.dev = DEVICE_DT_GET(STM32_DT_INST_DMA_CTLR(0, dir)),		\
 	.channel = DT_INST_DMAS_CELL_BY_NAME(0, dir, channel),		\
 	.channel_nb = DT_DMAS_CELL_BY_NAME(				\
 			DT_DRV_INST(0), dir, channel),			\
 	.reg = (DMA_TypeDef *)DT_REG_ADDR(				\
 			DT_PHANDLE_BY_NAME(DT_DRV_INST(0), dmas, dir)),	\
 	.cfg = {							\
-		.dma_slot = STM32_DMA_SLOT(0, dir, slot),		\
+		.dma_slot = STM32_DT_INST_DMA_SLOT(0, dir),		\
 		.channel_priority = STM32_DMA_CONFIG_PRIORITY(		\
-				STM32_DMA_CHANNEL_CONFIG(0, dir)),	\
+			STM32_DT_INST_DMA_CHANNEL_CONFIG(0, dir)),	\
 		.dma_callback = stm32_sdmmc_dma_cb,			\
 		.linked_channel = STM32_DMA_HAL_OVERRIDE,		\
 	},

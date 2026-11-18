@@ -345,7 +345,7 @@ MODEM_CMD_DEFINE(on_cmd_atcmdinfo_iccid)
 		p = strchr(mdata.mdm_iccid, ' ');
 		if (p) {
 			out_len = strlen(p + 1);
-			memmove(mdata.mdm_iccid, p + 1, len + 1);
+			memmove(mdata.mdm_iccid, p + 1, out_len + 1);
 		}
 	}
 
@@ -1123,7 +1123,7 @@ static void modem_net_iface_init(struct net_if *iface)
 	net_if_socket_offload_set(iface, offload_socket);
 }
 
-static struct offloaded_if_api api_funcs = {
+static const struct offloaded_if_api api_funcs = {
 	.iface_api.init = modem_net_iface_init,
 };
 

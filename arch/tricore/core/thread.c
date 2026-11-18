@@ -21,6 +21,24 @@ int arch_coprocessors_disable(struct k_thread *thread)
 	return -ENOTSUP;
 }
 
+#if defined(CONFIG_FPU_SHARING)
+/* The FPU state lives in the data registers and PSW */
+int arch_float_disable(struct k_thread *thread)
+{
+	ARG_UNUSED(thread);
+
+	return -ENOTSUP;
+}
+
+int arch_float_enable(struct k_thread *thread, unsigned int options)
+{
+	ARG_UNUSED(thread);
+	ARG_UNUSED(options);
+
+	return -ENOTSUP;
+}
+#endif /* CONFIG_FPU_SHARING */
+
 void z_tricore_reclaim_csa(struct k_thread *thread)
 {
 	uint32_t pcxi = thread->callee_saved.pcxi & 0xFFFFF;
@@ -31,13 +49,13 @@ void z_tricore_reclaim_csa(struct k_thread *thread)
 		return;
 	}
 
-	csa = UINT_TO_POINTER(((pcxi & 0xF0000) << 12) | ((pcxi & 0xFFFF) << 6));
+	csa = UINT_TO_POINTER(z_tricore_pcx_to_addr(pcxi));
 	key = irq_lock();
 	__asm volatile("dsync" ::: "memory");
 
 	while (csa->pcxi != 0) {
 		csa->pcxi &= 0xFFFFF;
-		csa = UINT_TO_POINTER(((csa->pcxi & 0xF0000) << 12) | ((csa->pcxi & 0xFFFF) << 6));
+		csa = UINT_TO_POINTER(z_tricore_pcx_to_addr(csa->pcxi));
 	}
 
 	csa->pcxi = cr_read(TRICORE_FCX);
@@ -54,11 +72,8 @@ unsigned int z_tricore_create_context(struct k_thread *thread, k_thread_entry_t 
 
 	__asm volatile("disable" ::: "memory");
 	uint32_t fcx = cr_read(TRICORE_FCX);
-	z_tricore_lower_context_t *lower =
-		(z_tricore_lower_context_t *)(((fcx & 0xF0000) << 12) | ((fcx & 0xFFFF) << 6));
-	z_tricore_upper_context_t *upper =
-		(z_tricore_upper_context_t *)(((lower->pcxi & 0xF0000) << 12) |
-					      ((lower->pcxi & 0xFFFF) << 6));
+	z_tricore_lower_context_t *lower = UINT_TO_POINTER(z_tricore_pcx_to_addr(fcx));
+	z_tricore_upper_context_t *upper = UINT_TO_POINTER(z_tricore_pcx_to_addr(lower->pcxi));
 	cr_write(TRICORE_FCX, upper->pcxi);
 	if (icr & 0x8000) {
 		__asm volatile("enable" ::: "memory");
@@ -93,16 +108,23 @@ void arch_new_thread(struct k_thread *thread, k_thread_stack_t *stack, char *sta
 void z_impl_k_thread_abort(k_tid_t thread)
 {
 	bool self_abort = (thread == _current);
+	unsigned int key = 0U;
 
 	SYS_PORT_TRACING_OBJ_FUNC_ENTER(k_thread, abort, thread);
 
 	if (self_abort) {
+		/* An interrupt switching away before z_thread_abort() marks the
+		 * thread dead would reclaim the CSAs of a still runnable thread.
+		 */
+		key = irq_lock();
 		_current_cpu->arch.to_reclaim = thread;
 	}
 
 	z_thread_abort(thread);
 
-	if (!self_abort) {
+	if (self_abort) {
+		irq_unlock(key);
+	} else {
 		z_tricore_reclaim_csa(thread);
 	}
 

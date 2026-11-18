@@ -449,6 +449,10 @@ should know about.
   fragments and devicetree overlays (if these files exists, otherwise will fallback to
   the name without the prefix). See :ref:`application-file-suffixes` for details.
 
+* :makevar:`KCONFIG_WARNING_AS_ERROR`: Treat every Kconfig warning as an error,
+  including the ones which are only printed by default. See
+  :ref:`kconfig_warning_as_error` for details.
+
 .. note::
 
    You can use a :ref:`cmake_build_config_package` to share common settings for
@@ -605,18 +609,26 @@ documentation.
 .. _CMake Cache: https://cmake.org/cmake/help/book/mastering-cmake/chapter/CMake%20Cache.html
 
 
+.. _application-configuration:
+
 Application Configuration
 *************************
-
-.. _application-configuration-directory:
-
-Application Configuration Directory
-===================================
 
 Zephyr will use configuration files from the application's configuration
 directory except for files with an absolute path provided by the arguments
 described earlier, for example ``CONF_FILE``, ``EXTRA_CONF_FILE``,
 ``DTC_OVERLAY_FILE``, and ``EXTRA_DTC_OVERLAY_FILE``.
+
+.. note::
+
+   Kconfig fragment files have the .conf file extension, devicetree overlay files have the
+   .overlay file extension. Avoid using the ``overlay`` prefix for Kconfig fragment files as this
+   terminology is reserved for devicetree and may cause confusion.
+
+.. _application-configuration-directory:
+
+Application Configuration Directory
+===================================
 
 The application configuration directory is defined by the
 ``APPLICATION_CONFIG_DIR`` variable.

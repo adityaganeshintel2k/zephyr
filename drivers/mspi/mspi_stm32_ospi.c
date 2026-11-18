@@ -418,7 +418,7 @@ static int mspi_stm32_ospi_access(const struct device *dev, const struct mspi_xf
 		    (packet->cmd == MSPI_NOR_CMD_SE_4B) || (packet->cmd == MSPI_NOR_OCMD_SE) ||
 		    (packet->cmd == MSPI_NOR_CMD_SE) ||
 		    ((mspi_stm32_ospi_hal_address_size(dev_data->dev_cfg.addr_length) ==
-		      HAL_XSPI_ADDRESS_24_BITS) &&
+		      HAL_OSPI_ADDRESS_24_BITS) &&
 		     (dev_data->dev_cfg.io_mode == MSPI_IO_MODE_SINGLE))) {
 			LOG_DBG(" MSPI_IO_MODE_SINGLE in 3Bytes addressing is not supported in "
 				"memory map mode, switching to indirect mode");
@@ -1166,7 +1166,7 @@ static int mspi_stm32_ospi_conf_validate(const struct mspi_cfg *config, uint32_t
 		return -ENOTSUP;
 	}
 
-	if (config->num_periph > MSPI_MAX_DEVICE) {
+	if (config->sw_multi_periph && config->num_periph > MSPI_MAX_DEVICE) {
 		LOG_ERR("Invalid MSPI peripheral number.");
 		return -ENOTSUP;
 	}

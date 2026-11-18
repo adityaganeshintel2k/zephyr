@@ -281,7 +281,9 @@ GROUP_START(DTCM)
 		__dtcm_data_end = .;
 	} GROUP_LINK_IN(DTCM AT> ROMABLE_REGION)
 
+	MPU_ALIGN(__dtcm_data_end - __dtcm_start);
 	__dtcm_end = .;
+	__dtcm_size = __dtcm_end - __dtcm_start;
 
 	__dtcm_data_load_start = LOADADDR(_DTCM_DATA_SECTION_NAME);
 
@@ -299,7 +301,6 @@ GROUP_END(DTCM)
 #include <zephyr/linker/debug-sections.ld>
 
 	/DISCARD/ : { *(.callinfo) }
-	/DISCARD/ : { *(.note.GNU-stack) }
 
 	/* Output sections silence lld's "--orphan-handling=warn". */
 #if defined(CONFIG_LLVM_USE_LLD)

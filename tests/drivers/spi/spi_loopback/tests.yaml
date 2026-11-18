@@ -40,6 +40,8 @@ tests:
       - nrf54l15dk/nrf54l15/cpuapp
       - sam_e54_xpro
       - pic32cx_sg41_cult
+      - pic32cm_gc00_cpro
+      - pic32cz_ca80_cult
     integration_platforms:
       - robokit1
   drivers.spi.mcux_dspi_dma.loopback:
@@ -63,6 +65,8 @@ tests:
     platform_allow:
       - sam_e54_xpro
       - pic32cx_sg41_cult
+      - pic32cm_gc00_cpro
+      - pic32cz_ca80_cult
   drivers.spi.stm32_spi_dma.loopback:
     extra_args: EXTRA_CONF_FILE="overlay-stm32-spi-dma.conf"
     platform_allow:
@@ -216,7 +220,7 @@ tests:
       - CONFIG_SPI_PL022_DMA=n
     platform_allow:
       - rpi_pico
-      - pico_plus2/rp2350b/m33
+      - pico_plus2/rp2350b/m33_0
   drivers.spi.pl022_spi_dma.loopback:
     extra_args: DTC_OVERLAY_FILE="boards/rpi_pico_pl022_dma.overlay"
     extra_configs:
@@ -225,7 +229,7 @@ tests:
       - CONFIG_DMA=y
     platform_allow:
       - rpi_pico
-      - pico_plus2/rp2350b/m33
+      - pico_plus2/rp2350b/m33_0
   drivers.spi.pl022_spi_dma_and_interrupt.loopback:
     extra_args: DTC_OVERLAY_FILE="boards/rpi_pico_pl022_dma.overlay"
     extra_configs:
@@ -234,7 +238,7 @@ tests:
       - CONFIG_DMA=y
     platform_allow:
       - rpi_pico
-      - pico_plus2/rp2350b/m33
+      - pico_plus2/rp2350b/m33_0
   drivers.spi.pl022_spi_dma_no_dma_props.loopback:
     extra_args: DTC_OVERLAY_FILE="boards/rpi_pico_pl022.overlay"
     extra_configs:
@@ -243,7 +247,7 @@ tests:
       - CONFIG_DMA=y
     platform_allow:
       - rpi_pico
-      - pico_plus2/rp2350b/m33
+      - pico_plus2/rp2350b/m33_0
   drivers.spi.pl022_spi_dma_and_interrupt_no_dma_props.loopback:
     extra_args: DTC_OVERLAY_FILE="boards/rpi_pico_pl022.overlay"
     extra_configs:
@@ -252,7 +256,7 @@ tests:
       - CONFIG_DMA=y
     platform_allow:
       - rpi_pico
-      - pico_plus2/rp2350b/m33
+      - pico_plus2/rp2350b/m33_0
   drivers.spi.pio_spi.loopback:
     extra_args:
       - DTC_OVERLAY_FILE="boards/rpi_pico_pio.overlay"
@@ -352,6 +356,8 @@ tests:
       - nrf54lm20dk/nrf54lm20a/cpuapp
       - nrf54lm20dk/nrf54lm20b/cpuapp
       - nrf7120dk/nrf7120/cpuapp
+      - nrf7120dk/nrf7120e/cpuapp
+      - nrf7120dk/nrf7120/cpuapp/ns
       - ophelia4ev/nrf54l15/cpuapp
   drivers.spi.nrf54l_16mhz:
     extra_args: EXTRA_DTC_OVERLAY_FILE="boards/nrf_at_16mhz.overlay"

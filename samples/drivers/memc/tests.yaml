@@ -13,6 +13,8 @@ tests:
     filter: dt_alias_exists("sram-ext")
     integration_platforms:
       - mimxrt595_evk/mimxrt595s/cm33
+      - mimxrt1060_evk/mimxrt1062/qspi
+      - mimxrt1170_evk/mimxrt1176/cm7
   sample.drivers.memc.mspi:
     tags: mspi
     filter: dt_alias_exists("psram0")
@@ -32,6 +34,7 @@ tests:
     tags: mspi
     platform_allow:
       - b_u585i_iot02a/stm32u585xx
+      - stm32h5f5j_dk
       - stm32h7s78_dk/stm32h7s7xx
     integration_platforms:
       - b_u585i_iot02a/stm32u585xx

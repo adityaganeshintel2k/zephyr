@@ -72,6 +72,12 @@ static void soc_rif_config(void)
 	/* LTDC Layer 1 */
 	RIF_MASTER_CID1_SEC_PRIV(LTDC1);
 	RIF_SLAVE_SEC_PRIV(LTDCL1);
+	/* SDMMC1 */
+	RIF_MASTER_CID1_SEC_PRIV(SDMMC1);
+	RIF_SLAVE_SEC_PRIV(SDMMC1);
+	/* SDMMC2 */
+	RIF_MASTER_CID1_SEC_PRIV(SDMMC2);
+	RIF_SLAVE_SEC_PRIV(SDMMC2);
 #ifdef NPU_PRESENT
 	/* NPU */
 	RIF_MASTER_CID1_SEC_PRIV(NPU);
@@ -115,5 +121,16 @@ void soc_early_init_hook(void)
 	/* RIF configuration */
 	if (IS_ENABLED(CONFIG_STM32N6_RIF_OPEN)) {
 		soc_rif_config();
+	}
+
+	if (IS_ENABLED(CONFIG_STM32N6_BRANCH_CACHE)) {
+		/*
+		 * Enable the Cortex-M55's branch cache.
+		 * CCR.BP is banked between Security states
+		 * so this must be done in every environment.
+		 */
+		SCB->CCR |= SCB_CCR_LOB_Msk;
+		__DSB();
+		__ISB();
 	}
 }

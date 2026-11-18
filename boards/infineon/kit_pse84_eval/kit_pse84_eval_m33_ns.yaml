@@ -21,3 +21,9 @@ supported:
   - flash
   - dma
   - spi
+  - i2c
+  - counter
+  - pwm
+  - arduino_gpio
+  - arduino_i2c
+  - arduino_spi

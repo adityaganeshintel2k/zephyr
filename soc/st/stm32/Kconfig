@@ -53,6 +53,14 @@ config HAS_STM32_UNCACHED_ACCESS_ONLY_OTP
 	  Hidden option selected by SoCs where the OTP/read-only areas of NVM
 	  must be accessed using uncached operations (else a bus fault occurs).
 
+# This option is consumed by various drivers which access the RTC registers.
+config HAS_STM32_RTC_READ_GATED_BY_BKP_DOMAIN
+	bool
+	help
+	  Hidden symbol selected by SoCs where the RTC registers are read-protected
+	  when the backup domain protection is not disabled. Usually, the RTC registers
+	  will read as 0 in this situation.
+
 # This option is consumed by external flash drivers
 config STM32_APP_IN_EXT_FLASH
 	bool
@@ -67,5 +75,14 @@ config STM32_INT_FLASH_SECURE_BASE_ADDRESS
 	help
 	  Secure internal flash based address when TZEN is enabled on
 	  applicable STM32 SoCs.
+
+config SOC_FAMILY_STM32_HEX_FILE_SEC_RANGE
+	bool "Board HEX file loads non-secure image through flash secure address range"
+	depends on TRUSTED_EXECUTION_NONSECURE
+	help
+	  Enable this option if the target board Option Bytes are configured for
+	  internal flash as secure (e.g. with <build>/tfm/api_ns/regression.sh)
+	  before flash is programmed. In this cases, the generated HEX file shall
+	  locate the non-secure image in the flash secure memory address range.
 
 endif # SOC_FAMILY_STM32

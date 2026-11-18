@@ -15,6 +15,7 @@ tests:
       - disco_l475_iot1
       - cc3220sf_launchxl
       - cc3235sf_launchxl
+      - cy8cproto_062s3_4343w
       - cy8cproto_063_ble
       - stm32l496g_disco
       - stm32h735g_disco
@@ -26,6 +27,8 @@ tests:
       - nrf54l15dk/nrf54l15/cpuapp
       - nrf54lm20dk/nrf54lm20a/cpuapp
       - nrf54lm20dk/nrf54lm20b/cpuapp
+      - nrf54lv10dk/nrf54lv10a/cpuapp
+      - nrf54lv10dk/nrf54lv10a/cpuapp/ns
       - ophelia4ev/nrf54l15/cpuapp
       - mec172xevb_assy6906
       - gd32f350r_eval
@@ -61,6 +64,7 @@ tests:
       - mck_ra4t1
       - fpb_ra8e1
       - raytac_an54lv_db_15/nrf54l15/cpuapp
+      - frdm_mcxl255/mcxl255/cpu0
     integration_platforms:
       - nucleo_l073rz
       - nrf52840dk/nrf52840

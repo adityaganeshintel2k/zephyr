@@ -67,6 +67,41 @@ config RISCV_ALWAYS_SWITCH_THROUGH_ECALL
 	  and most people should say n here to minimize context switching
 	  overhead.
 
+config RISCV_HAS_NESTED_INTERRUPTS
+	bool
+	help
+	  Selected by an interrupt controller driver that supports nested
+	  interrupts.
+
+config RISCV_NESTED_INTERRUPTS
+	bool "Nested interrupts"
+	depends on RISCV_HAS_NESTED_INTERRUPTS
+	help
+	  Allow an ISR to be preempted by an interrupt of higher priority.
+
+	  Each interrupt controller decides which interrupts may preempt an
+	  ISR, from its own priority scheme. Local interrupts have no hardware
+	  preemption, so while an ISR runs, its interrupt and the ones of lower
+	  priority are masked by CSR mie, in the order of the RISC-V privileged
+	  architecture specification: MEI > MSI > MTI > SEI > SSI > STI >
+	  LCOFI. Interrupts 16 and above are platform specific, so their
+	  number is taken as the priority.
+
+	  ISRs are still entered with interrupts disabled. The code handling
+	  the interrupt, such as the interrupt controller driver, enables them
+	  once its source can no longer signal again.
+
+config RISCV_HAS_CUSTOM_NESTED_INTERRUPTS
+	bool
+	depends on RISCV_HAS_NESTED_INTERRUPTS
+	help
+	  Selected by a SoC or CPU with a custom interrupt controller, to
+	  enable and disable nested interrupts around the ISR call in the
+	  common RISC-V ISR wrapper, instead of the standard mie handling.
+	  The SoC or CPU provides custom_nested_irq.inc, which defines
+	  the __custom_nested_interrupts_enable and
+	  __custom_nested_interrupts_disable assembler macros.
+
 DT_CHOSEN_Z_SRAM = zephyr,sram
 
 choice RISCV_CMODEL
@@ -109,6 +144,15 @@ config RISCV_SMP_IPI_CLINT
 	depends on DT_HAS_SIFIVE_CLINT0_ENABLED
 	help
 	  Use CLINT-based IPI implementation.
+
+config RISCV_SMP_IPI_SBI
+	bool "SBI-based IPI"
+	depends on RISCV_S_MODE_EXTERNAL_SBI
+	help
+	  Use the SBI IPI extension (sbi_send_ipi) to raise the supervisor
+	  software interrupt on the target hart. This is the implementation to
+	  use when Zephyr runs in S-mode as a payload of an external SBI such
+	  as OpenSBI, which owns the CLINT.
 
 config RISCV_SMP_IPI_CUSTOM
 	bool "Custom IPI implementation"
@@ -387,6 +431,7 @@ config GEN_ISR_TABLES
 
 config GEN_SW_ISR_TABLE
 	default y
+	depends on GEN_ISR_TABLES
 	select USE_ISR_WRAPPER
 
 config GEN_IRQ_VECTOR_TABLE
@@ -561,6 +606,15 @@ config PMP_UNLOCK_ROM_FOR_DEBUG
 
 endif #RISCV_PMP
 
+config RISCV_LANDING_PADS
+	bool "Landing Pad Enforcement (Zicfilp)"
+	depends on RISCV_ISA_EXT_ZICFILP
+	default y
+	help
+	  Enables forward-edge control-flow integrity by configuring
+	  environment registers to enforce landing pad (lpad) instructions at
+	  indirect branch targets.
+
 config PMP_STACK_GUARD
 	bool
 	depends on HW_STACK_PROTECTION
@@ -624,7 +678,7 @@ config NULL_POINTER_EXCEPTION_REGION_SIZE
 	help
 	  Use a PMP slot to make region (starting at address 0x0) inaccessible for
 	  detecting null pointer dereferencing (raising a CPU access fault).
-	  Minimum is 4 bytes.
+	  Minimum is 4 bytes. The size is rounded up to PMP_GRANULARITY.
 
 endif # NULL_POINTER_EXCEPTION_DETECTION_PMP
 
@@ -745,9 +799,6 @@ config RISCV_TRAP_HANDLER_ALIGNMENT
 	  the format of MTVEC register which is RISC-V platform-specific.
 	  The minimum alignment is 4 bytes according to the Spec.
 
-config GEN_IRQ_VECTOR_TABLE
-	select RISCV_VECTORED_MODE if RISCV_PRIVILEGED
-
 config ARCH_HAS_SINGLE_THREAD_SUPPORT
 	default y if !SMP
 
@@ -831,8 +882,6 @@ config RISCV_S_MODE_INTERNAL_SBI
 
 config RISCV_S_MODE_EXTERNAL_SBI
 	bool "Enter S-mode directly, relying on an external SBI (e.g. OpenSBI)"
-	# TODO: Remove once SMP is fixed with this configuration
-	depends on !SMP
 	help
 	  Skip the in-tree M-mode boot sequence (PMP/medeleg/mideleg/
 	  mcounteren/mtvec setup and the mret drop to S-mode). Use this when

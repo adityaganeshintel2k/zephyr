@@ -28,23 +28,14 @@ config USBD_CDC_ACM_STACK_SIZE
 	help
 	  USB CDC ACM workqueue stack size.
 
-config USBD_CDC_ACM_BUF_POOL
-	bool "Use dedicated buffer pool"
-	default y if !USBD_MAX_SPEED_FULL
+config USBD_CDC_ACM_WORKQUEUE_PRIORITY
+	int "USB CDC ACM workqueue priority"
+	depends on USBD_CDC_ACM_WORKQUEUE
+	default SYSTEM_WORKQUEUE_PRIORITY
 	help
-	  Use a dedicated TX buffer pool whose size is based on the number of CDC
-	  ACM instances and the size of the bulk IN endpoint. When disabled, the
-	  implementation uses the UDC driver's pool.
-
-config USBD_CDC_ACM_BUF_POOL_SIZE
-	int "CDC ACM buffer pool size"
-	depends on USBD_CDC_ACM_BUF_POOL
-	range 512 $(UINT16_MAX)
-	default 512
-	help
-	  Size of each buffer in the CDC ACM buffer pool. This should
-	  be large enough to accommodate the maximum packet size for
-	  the IN endpoint.
+	  USB CDC ACM workqueue thread priority. A preemptible priority below
+	  that of the threads writing to the port lets their writes accumulate
+	  into fewer, larger USB transfers.
 
 config USBD_CDC_ACM_TX_DELAY_MS
 	int

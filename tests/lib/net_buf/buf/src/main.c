@@ -69,6 +69,7 @@ static void fixed_destroy(struct net_buf *buf);
 static void var_destroy(struct net_buf *buf);
 static void var_destroy_aligned(struct net_buf *buf);
 static void var_destroy_aligned_small(struct net_buf *buf);
+static void ref_destroy(struct net_buf *buf);
 
 #define VAR_POOL_ALIGN 8
 #define VAR_POOL_ALIGN_SMALL 4
@@ -89,6 +90,8 @@ NET_BUF_POOL_VAR_ALIGN_DEFINE(var_pool_aligned, VAR_POOL_DATA_COUNT,
 NET_BUF_POOL_VAR_ALIGN_DEFINE(var_pool_aligned_small, VAR_POOL_DATA_COUNT,
 			      VAR_POOL_DATA_SIZE, USER_DATA_VAR,
 			      var_destroy_aligned_small, VAR_POOL_ALIGN_SMALL);
+/* For test_net_buf_ref_saturated(), whose buffer stays allocated if it fails */
+NET_BUF_POOL_FIXED_DEFINE(ref_pool, 1, 16, 0, ref_destroy);
 
 static void buf_destroy(struct net_buf *buf)
 {
@@ -132,6 +135,15 @@ static void var_destroy_aligned_small(struct net_buf *buf)
 
 	destroy_called++;
 	zassert_equal(pool, &var_pool_aligned_small, "Invalid free pointer in buffer");
+	net_buf_destroy(buf);
+}
+
+static void ref_destroy(struct net_buf *buf)
+{
+	struct net_buf_pool *pool = net_buf_pool_get(buf->pool_id);
+
+	destroy_called++;
+	zassert_equal(pool, &ref_pool, "Invalid free pointer in buffer");
 	net_buf_destroy(buf);
 }
 
@@ -1196,6 +1208,69 @@ ZTEST(net_buf_tests, test_net_buf_linearize)
 	zassert_equal(destroy_called, 4, "Incorrect destroy callback count");
 }
 
+static struct net_buf *skip_frag_alloc(size_t len, uint8_t first)
+{
+	struct net_buf *frag;
+
+	frag = net_buf_alloc_len(&bufs_pool, 10, K_NO_WAIT);
+	zassert_not_null(frag, "Failed to get fragment");
+
+	for (size_t i = 0U; i < len; i++) {
+		net_buf_add_u8(frag, (uint8_t)(first + i));
+	}
+
+	return frag;
+}
+
+ZTEST(net_buf_tests, test_net_buf_skip)
+{
+	struct net_buf *buf, *a, *b, *c;
+
+	destroy_called = 0;
+
+	/* Zero-capacity head, a: 0..9, empty fragment, b: 10..19, c: 20..29 */
+	buf = net_buf_alloc_len(&bufs_pool, 0, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to get buffer");
+	a = skip_frag_alloc(10, 0);
+	net_buf_frag_add(buf, a);
+	net_buf_frag_add(buf, skip_frag_alloc(0, 0));
+	b = skip_frag_alloc(10, 10);
+	net_buf_frag_add(buf, b);
+	c = skip_frag_alloc(10, 20);
+	net_buf_frag_add(buf, c);
+
+	/* Skipping nothing leaves even an empty head in place */
+	zassert_equal(net_buf_skip(buf, 0), buf, "Zero-length skip changed the chain");
+	zassert_equal(destroy_called, 0, "Incorrect destroy callback count");
+
+	/* Crosses the zero-capacity head */
+	buf = net_buf_skip(buf, 3);
+	zassert_equal(buf, a, "Skip did not end in the first data fragment");
+	zassert_equal(buf->len, 7U, "Incorrect remaining length");
+	zassert_equal(buf->data[0], 3U, "Incorrect data after skip");
+	zassert_equal(destroy_called, 1, "Incorrect destroy callback count");
+
+	/* Crosses the end of a and the empty fragment after it */
+	buf = net_buf_skip(buf, 11);
+	zassert_equal(buf, b, "Skip did not end in the second data fragment");
+	zassert_equal(buf->len, 6U, "Incorrect remaining length");
+	zassert_equal(buf->data[0], 14U, "Incorrect data after skip");
+	zassert_equal(net_buf_frags_len(buf), 16U, "Incorrect remaining chain length");
+	zassert_equal(destroy_called, 3, "Incorrect destroy callback count");
+
+	/* Ends exactly on a fragment boundary */
+	buf = net_buf_skip(buf, 6);
+	zassert_equal(buf, c, "Skip did not move to the next fragment");
+	zassert_equal(buf->len, 10U, "Incorrect remaining length");
+	zassert_equal(buf->data[0], 20U, "Incorrect data after skip");
+	zassert_equal(destroy_called, 4, "Incorrect destroy callback count");
+
+	/* Skipping past the end releases the rest of the chain */
+	buf = net_buf_skip(buf, 20);
+	zassert_is_null(buf, "Chain not fully skipped");
+	zassert_equal(destroy_called, 5, "Incorrect destroy callback count");
+}
+
 ZTEST(net_buf_tests, test_net_buf_var_pool_aligned)
 {
 	struct net_buf *buf1, *buf2, *buf3;
@@ -1304,6 +1379,124 @@ ZTEST(net_buf_tests, test_net_buf_drop)
 	zassert_equal(destroy_called, 1, "Incorrect destroy callback count");
 }
 
+static struct net_buf *requeue_buf;
+static struct k_fifo *requeue_fifo;
+static sys_slist_t *requeue_list;
+
+/* Puts requeue_buf into the list or FIFO that is being purged. Holding a spinlock
+ * would lock interrupts, so they must be unlocked here.
+ */
+static void requeue_destroy(struct net_buf *buf)
+{
+	unsigned int key = irq_lock();
+	bool unlocked = arch_irq_unlocked(key);
+
+	irq_unlock(key);
+	zassert_true(unlocked, "Destroy callback called under a spinlock");
+
+	destroy_called++;
+
+	if (requeue_list != NULL) {
+		net_buf_slist_put(requeue_list, net_buf_take(&requeue_buf));
+	}
+
+	if (requeue_fifo != NULL) {
+		k_fifo_put(requeue_fifo, net_buf_take(&requeue_buf));
+	}
+
+	net_buf_destroy(buf);
+}
+
+NET_BUF_POOL_FIXED_DEFINE(requeue_pool, 1, 4, 0, requeue_destroy);
+
+static ZTEST(net_buf_tests, test_net_buf_slist_purge)
+{
+	struct net_buf *bufs[3], *ref;
+	sys_slist_t list;
+
+	destroy_called = 0;
+	sys_slist_init(&list);
+
+	net_buf_slist_purge(&list);
+	zassert_true(sys_slist_is_empty(&list), "Empty list changed by purge");
+
+	ARRAY_FOR_EACH(bufs, i) {
+		bufs[i] = net_buf_alloc_len(&bufs_pool, 74, K_NO_WAIT);
+		zassert_not_null(bufs[i], "Failed to get buffer");
+	}
+
+	/* A buffer with another reference outlives the purge */
+	ref = net_buf_ref(bufs[1]);
+
+	ARRAY_FOR_EACH(bufs, i) {
+		net_buf_slist_put(&list, net_buf_take(&bufs[i]));
+	}
+
+	net_buf_slist_purge(&list);
+	zassert_true(sys_slist_is_empty(&list), "List not empty after purge");
+	zassert_equal(destroy_called, 2, "Incorrect destroy callback count");
+	zassert_equal(ref->ref, 1, "Unexpected ref count");
+
+	/* A buffer put into the list by a destroy callback stays in it */
+	bufs[0] = net_buf_alloc_fixed(&requeue_pool, K_NO_WAIT);
+	zassert_not_null(bufs[0], "Failed to get buffer");
+	net_buf_slist_put(&list, net_buf_take(&bufs[0]));
+	requeue_buf = net_buf_take(&ref);
+	requeue_list = &list;
+
+	net_buf_slist_purge(&list);
+	requeue_list = NULL;
+	zassert_is_null(requeue_buf, "Destroy callback did not put the buffer");
+	ref = net_buf_slist_get(&list);
+	zassert_not_null(ref, "Buffer put by the destroy callback was purged");
+	zassert_true(sys_slist_is_empty(&list), "List not empty");
+
+	net_buf_unref(ref);
+	zassert_equal(destroy_called, 4, "Incorrect destroy callback count");
+}
+
+static ZTEST(net_buf_tests, test_net_buf_fifo_purge)
+{
+	struct net_buf *bufs[3], *ref;
+	struct k_fifo fifo;
+
+	destroy_called = 0;
+	k_fifo_init(&fifo);
+
+	net_buf_fifo_purge(&fifo);
+	zassert_true(k_fifo_is_empty(&fifo), "Empty FIFO changed by purge");
+
+	ARRAY_FOR_EACH(bufs, i) {
+		bufs[i] = net_buf_alloc_len(&bufs_pool, 74, K_NO_WAIT);
+		zassert_not_null(bufs[i], "Failed to get buffer");
+	}
+
+	/* A buffer with another reference outlives the purge */
+	ref = net_buf_ref(bufs[1]);
+
+	ARRAY_FOR_EACH(bufs, i) {
+		k_fifo_put(&fifo, net_buf_take(&bufs[i]));
+	}
+
+	net_buf_fifo_purge(&fifo);
+	zassert_true(k_fifo_is_empty(&fifo), "FIFO not empty after purge");
+	zassert_equal(destroy_called, 2, "Incorrect destroy callback count");
+	zassert_equal(ref->ref, 1, "Unexpected ref count");
+
+	/* A buffer put into the FIFO by a destroy callback is purged as well */
+	bufs[0] = net_buf_alloc_fixed(&requeue_pool, K_NO_WAIT);
+	zassert_not_null(bufs[0], "Failed to get buffer");
+	k_fifo_put(&fifo, net_buf_take(&bufs[0]));
+	requeue_buf = net_buf_take(&ref);
+	requeue_fifo = &fifo;
+
+	net_buf_fifo_purge(&fifo);
+	requeue_fifo = NULL;
+	zassert_is_null(requeue_buf, "Destroy callback did not put the buffer");
+	zassert_true(k_fifo_is_empty(&fifo), "FIFO not empty after purge");
+	zassert_equal(destroy_called, 4, "Incorrect destroy callback count");
+}
+
 ZTEST(net_buf_tests, test_net_buf_is_valid)
 {
 	struct net_buf *buf;
@@ -1331,6 +1524,92 @@ ZTEST(net_buf_tests, test_net_buf_is_valid)
 
 	net_buf_unref(buf);
 	zassert_equal(destroy_called, 1, "Incorrect destroy callback count");
+}
+
+ZTEST(net_buf_tests, test_net_buf_double_free)
+{
+	struct net_buf *buf;
+	uint8_t pool_id;
+	uint8_t user_data_size;
+
+	if (IS_ENABLED(CONFIG_ASSERT)) {
+		/* An assertion catches the double free before it returns */
+		ztest_test_skip();
+	}
+
+	destroy_called = 0;
+
+	buf = net_buf_alloc_len(&fixed_pool, 16, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to get buffer");
+
+	pool_id = buf->pool_id;
+	user_data_size = buf->user_data_size;
+
+	net_buf_unref(buf);
+	zassert_equal(destroy_called, 1, "Incorrect destroy callback count");
+	zassert_equal(buf->ref, 0U, "Freed buffer has a reference");
+
+	/* A second unref has to leave the freed buffer as it is */
+	net_buf_unref(buf);
+	zexpect_equal(destroy_called, 1, "Buffer destroyed twice");
+	zexpect_equal(buf->ref, 0U, "Reference count changed to %u", buf->ref);
+	zexpect_equal(buf->flags, 0U, "Flags changed to 0x%02x", buf->flags);
+	zexpect_equal(buf->pool_id, pool_id, "Pool id changed from %u to %u", pool_id,
+		      buf->pool_id);
+	zexpect_equal(buf->user_data_size, user_data_size, "User data size changed from %u to %u",
+		      user_data_size, buf->user_data_size);
+}
+
+ZTEST(net_buf_tests, test_net_buf_ref_saturated)
+{
+	struct net_buf *buf;
+	uint8_t pool_id;
+	uint8_t user_data_size;
+
+	if (IS_ENABLED(CONFIG_ASSERT)) {
+		/* An assertion catches the overflow before it returns */
+		ztest_test_skip();
+	}
+
+	destroy_called = 0;
+
+	buf = net_buf_alloc_len(&ref_pool, 16, K_NO_WAIT);
+	zassert_not_null(buf, "Failed to get buffer");
+
+	pool_id = buf->pool_id;
+	user_data_size = buf->user_data_size;
+
+	/* One reference more than the count can hold */
+	for (size_t i = 0; i < UINT8_MAX; i++) {
+		zassert_equal_ptr(net_buf_ref(buf), buf);
+	}
+
+	zexpect_equal(buf->ref, UINT8_MAX, "Reference count %u", buf->ref);
+	zexpect_equal(buf->flags, 0U, "Flags changed to 0x%02x", buf->flags);
+	zexpect_equal(buf->pool_id, pool_id, "Pool id changed from %u to %u", pool_id,
+		      buf->pool_id);
+	zexpect_equal(buf->user_data_size, user_data_size, "User data size changed from %u to %u",
+		      user_data_size, buf->user_data_size);
+
+	/* A reference taken and dropped again must not free the buffer */
+	zassert_equal_ptr(net_buf_ref(buf), buf);
+	net_buf_unref(buf);
+	zexpect_equal(destroy_called, 0, "Buffer freed while referenced");
+
+	/* The count no longer tells when the last reference is dropped, so the
+	 * buffer is never freed.
+	 */
+	for (size_t i = 0; i <= UINT8_MAX; i++) {
+		net_buf_unref(buf);
+	}
+
+	zassert_equal(destroy_called, 0, "Buffer freed with a saturated reference count");
+	zassert_equal(buf->ref, UINT8_MAX, "Reference count changed to %u", buf->ref);
+
+	/* All references have been dropped: give the buffer back to its pool */
+	buf->ref = 1U;
+	net_buf_unref(buf);
+	zassert_equal(destroy_called, 1, "Buffer not freed");
 }
 
 ZTEST_SUITE(net_buf_tests, NULL, NULL, NULL, NULL, NULL);

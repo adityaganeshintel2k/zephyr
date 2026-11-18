@@ -150,7 +150,7 @@ SECTIONS
     LIB_OBJ_FUNC_IN_SECT(libarch__xtensa__core.a,fatal.c.obj,*)
     LIB_OBJ_FUNC_IN_SECT(libarch__xtensa__core.a,cpu_idle.c.obj,*)
 
-    *(.text.arch_is_in_isr)
+    *(.literal.arch_is_in_isr .text.arch_is_in_isr)
 
     /* To support backtracing */
     LIB_OBJ_FUNC_IN_SECT(libarch__xtensa__core.a,xtensa_backtrace.c.obj,*)
@@ -370,5 +370,4 @@ SECTIONS
     KEEP (*(.debug.xt.callgraph .debug.xt.callgraph.* .gnu.linkonce.xt.callgraph.*))
   }
 
-  /DISCARD/ : { *(.note.GNU-stack) }
 }

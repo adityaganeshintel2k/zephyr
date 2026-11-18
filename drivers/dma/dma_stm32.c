@@ -114,28 +114,90 @@ static int dma_stm32_hal_map_addr_adj(enum dma_addr_adj z_adj, uint32_t *hal_inc
 	}
 }
 
+#if defined(DMA_MBURST_SINGLE) || defined(DMA_PBURST_SINGLE)
+static int dma_stm32_hal_map_burst(uint32_t z_burst, uint32_t z_size, uint32_t *hal_burst,
+				   uint32_t hal_single, uint32_t hal_inc4, uint32_t hal_inc8,
+				   uint32_t hal_inc16)
+{
+	/* A burst length the caller left unset means single transfers */
+	if (z_burst == 0 || z_size == 0) {
+		*hal_burst = hal_single;
+		return 0;
+	}
+
+	if (z_burst % z_size != 0) {
+		return -ENOTSUP;
+	}
+
+	switch (z_burst / z_size) {
+	case 1:
+		*hal_burst = hal_single;
+		return 0;
+	case 4:
+		*hal_burst = hal_inc4;
+		return 0;
+	case 8:
+		*hal_burst = hal_inc8;
+		return 0;
+	case 16:
+		*hal_burst = hal_inc16;
+		return 0;
+	default:
+		return -ENOTSUP;
+	}
+}
+#endif /* DMA_MBURST_SINGLE || DMA_PBURST_SINGLE */
+
 static int dma_stm32_hal_config_widths(const struct dma_config *cfg, DMA_InitTypeDef *hal_config)
 {
 	uint32_t periph_dsize, mem_dsize;
+	uint32_t periph_burst, mem_burst;
 	int ret;
 
 	switch (cfg->channel_direction) {
 	case MEMORY_TO_PERIPHERAL:
 		periph_dsize = cfg->dest_data_size;
+		periph_burst = cfg->dest_burst_length;
 		mem_dsize = cfg->source_data_size;
+		mem_burst = cfg->source_burst_length;
 		break;
 	case MEMORY_TO_MEMORY:
-		if (cfg->source_data_size != cfg->dest_data_size) {
+		if (cfg->source_data_size != cfg->dest_data_size ||
+		    cfg->source_burst_length != cfg->dest_burst_length) {
 			return -ENOTSUP;
 		}
 		__fallthrough;
 	case PERIPHERAL_TO_MEMORY:
 		periph_dsize = cfg->source_data_size;
+		periph_burst = cfg->source_burst_length;
 		mem_dsize = cfg->dest_data_size;
+		mem_burst = cfg->dest_burst_length;
 		break;
 	default:
 		return -ENOTSUP;
 	}
+
+#ifdef DMA_PBURST_SINGLE
+	ret = dma_stm32_hal_map_burst(periph_burst, periph_dsize, &hal_config->PeriphBurst,
+				      DMA_PBURST_SINGLE, DMA_PBURST_INC4, DMA_PBURST_INC8,
+				      DMA_PBURST_INC16);
+	if (ret < 0) {
+		return ret;
+	}
+#else
+	ARG_UNUSED(periph_burst);
+#endif /* DMA_PBURST_SINGLE */
+
+#ifdef DMA_MBURST_SINGLE
+	ret = dma_stm32_hal_map_burst(mem_burst, mem_dsize, &hal_config->MemBurst,
+				      DMA_MBURST_SINGLE, DMA_MBURST_INC4, DMA_MBURST_INC8,
+				      DMA_MBURST_INC16);
+	if (ret < 0) {
+		return ret;
+	}
+#else
+	ARG_UNUSED(mem_burst);
+#endif /* DMA_MBURST_SINGLE */
 
 	ret = dma_stm32_hal_map_data_size(periph_dsize, &hal_config->PeriphDataAlignment,
 					  DMA_PDATAALIGN_BYTE, DMA_PDATAALIGN_HALFWORD,
@@ -183,7 +245,8 @@ static int dma_stm32_hal_config_increments(uint16_t source_addr_adj, uint16_t de
  * Default DMA driver configuration relies on these values,
  * in case the fields have not been initialized in the @p zephyr_config.
  *
- * hal_config->Channel			= DMA_CHANNEL_0;
+ * hal_config->Request			= DMA_CHANNEL_0;
+ * (On STM32F2/F4/F7 series this field is hal_config->Channel)
  * hal_config->Direction		= DMA_PERIPH_TO_MEMORY;
  * hal_config->PeriphInc		= DMA_PINC_DISABLE;
  * hal_config->MemInc			= DMA_MINC_DISABLE;
@@ -191,8 +254,10 @@ static int dma_stm32_hal_config_increments(uint16_t source_addr_adj, uint16_t de
  * hal_config->MemDataAlignment		= DMA_MDATAALIGN_BYTE;
  * hal_config->Mode			= DMA_NORMAL;
  * hal_config->Priority			= DMA_PRIORITY_LOW;
+ *
+ * Those 4 fields apply only for CONFIG_DMA_STM32_V1 along with above:
  * hal_config->FIFOMode			= DMA_FIFOMODE_DISABLE;
- * hal_config->FIFOThreshold		= DMA_FIFO_THRESHOLD_1QUARTERFULL;
+ * hal_config->FIFOThreshold		= DMA_FIFO_THRESHOLD_FULL;
  * hal_config->MemBurst			= DMA_MBURST_SINGLE;
  * hal_config->PeriphBurst		= DMA_PBURST_SINGLE;
  */
@@ -233,8 +298,10 @@ int dma_stm32_zcfg_to_halcfg(const struct device *dma, const struct dma_config *
 	}
 
 
-#if defined(CONFIG_DMA_STM32_V1) && !defined(CONFIG_SOC_SERIES_STM32H7X)
-	hal_config->Channel = zephyr_config->dma_slot;
+#if defined(CONFIG_SOC_SERIES_STM32F2X) || \
+	defined(CONFIG_SOC_SERIES_STM32F4X) || \
+	defined(CONFIG_SOC_SERIES_STM32F7X)
+	hal_config->Channel = zephyr_config->dma_slot * DMA_CHANNEL_1;
 #elif DT_HAS_COMPAT_STATUS_OKAY(st_stm32_dma_v2bis)
 	/* DMA under "st,stm32-dma-v2bis" compatible do not possess
 	 * DMA_InitTypeDef->Channel or DMA_InitTypeDef->Request.
@@ -249,14 +316,6 @@ int dma_stm32_zcfg_to_halcfg(const struct device *dma, const struct dma_config *
 
 #ifdef DMA_FIFO_THRESHOLD_FULL
 	hal_config->FIFOThreshold = DMA_FIFO_THRESHOLD_FULL;
-#endif
-
-#ifdef DMA_MBURST_SINGLE
-	hal_config->MemBurst = DMA_MBURST_SINGLE;
-#endif
-
-#ifdef DMA_PBURST_SINGLE
-	hal_config->PeriphBurst = DMA_PBURST_SINGLE;
 #endif
 
 	return 0;
@@ -842,6 +901,8 @@ static int dma_stm32_reload(const struct device *dev, uint32_t id,
 	/* When reloading the dma, the stream is busy again before enabling */
 	stream->busy = true;
 
+	/* The flags of the last transfer must be cleared before the stream is enabled */
+	dma_stm32_clear_stream_irq(dev, id);
 	stm32_dma_enable_stream(dma, id);
 
 	return 0;
@@ -953,6 +1014,7 @@ static int dma_stm32_get_status(const struct device *dev,
 	const struct dma_stm32_config *config = dev->config;
 	DMA_TypeDef *dma = (DMA_TypeDef *)(config->base);
 	struct dma_stm32_stream *stream;
+	uint32_t pending_elems;
 
 	/* Give channel from index 0 */
 	id = id - STM32_DMA_STREAM_OFFSET;
@@ -961,9 +1023,18 @@ static int dma_stm32_get_status(const struct device *dev,
 	}
 
 	stream = &config->streams[id];
-	stat->pending_length = LL_DMA_GetDataLength(dma, dma_stm32_id_to_stream(id));
 	stat->dir = stream->direction;
 	stat->busy = stream->busy;
+
+	/*
+	 * "Pending length to be transferred in bytes, HW specific"
+	 *
+	 * The DMA keeps track of a number of elements remaining rather than
+	 * an amount of bytes; convert to what the API expects based on the
+	 * source data size: "to be transferred" = "to be read from source".
+	 */
+	pending_elems = LL_DMA_GetDataLength(dma, dma_stm32_id_to_stream(id));
+	stat->pending_length = pending_elems * stream->src_size;
 
 	return 0;
 }
@@ -1074,8 +1145,10 @@ static void dma_stm32_config_irq_0(const struct device *dev)
 	/* All DMAs have at least one IRQ line */
 	DMA_STM32_IRQ_CONNECT(0, 0);
 
-	/* On STM32WB0 series, there is a single IRQ line for all channels */
-#if !defined(CONFIG_SOC_SERIES_STM32WB0X)
+	/* On STM32WB0 and STM32WL3 series, there is a single IRQ line
+	 * for all channels
+	 */
+#if !defined(CONFIG_SOC_SERIES_STM32WB0X) && !defined(CONFIG_SOC_SERIES_STM32WL3X)
 	/* On other series, the sharing follows a pattern:
 	 *	IRQn (X+0) is not shared (assigned to DMA1 channel 1)
 	 *	IRQn (X+1) is shared by DMA1 channels 2 and 3
@@ -1092,7 +1165,7 @@ static void dma_stm32_config_irq_0(const struct device *dev)
 #if DT_INST_IRQ_HAS_IDX(0, 3)
 	DMA_STM32_IRQ_CONNECT(0, 3);
 #endif /* DT_INST_IRQ_HAS_IDX(0, 3) */
-#endif /* !CONFIG_SOC_SERIES_STM32WB0X */
+#endif /* !CONFIG_SOC_SERIES_STM32WB0X && !CONFIG_SOC_SERIES_STM32WL3X */
 #endif /* !CONFIG_DMA_STM32_SHARED_IRQS */
 }
 

@@ -128,7 +128,7 @@ static void usbh_class_probe_function(struct usb_device *const udev,
 		}
 
 		ret = usbh_class_probe(c_data, udev, iface);
-		if (ret == -ENOTSUP) {
+		if (ret != 0) {
 			LOG_DBG("Class %s not supporting this function, skipping",
 				c_data->name);
 			continue;
@@ -158,6 +158,11 @@ void usbh_class_probe_device(struct usb_device *const udev)
 	filter_data.proto = udev->dev_desc.bDeviceProtocol;
 
 	usbh_class_probe_function(udev, &filter_data, USBH_CLASS_IFNUM_DEVICE);
+
+	/* Single-function device matched at device level, no need to scan interfaces */
+	if (usbh_class_is_any_iface_bound(udev)) {
+		return;
+	}
 
 	/* To support multi-function devices, match against each function */
 

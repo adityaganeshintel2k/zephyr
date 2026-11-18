@@ -337,6 +337,8 @@ static int sai_sub_dma_init(const struct device *dev)
 	}
 
 #if defined(CONFIG_DMA_STM32U5)
+	hdma->Init.SrcBurstLength = 1;
+	hdma->Init.DestBurstLength = 1;
 	hdma->Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0 | DMA_DEST_ALLOCATED_PORT0;
 #endif
 
@@ -733,7 +735,7 @@ static int stm32_sai_sub_write(const struct device *dev, void *mem_block, size_t
 
 	struct queue_item item = {.buffer = mem_block, .size = size};
 
-	ret = k_msgq_put(&stream->queue, &item, K_MSEC(stream->i2s_cfg.timeout));
+	ret = k_msgq_put(&stream->queue, &item, SYS_TIMEOUT_MS(stream->i2s_cfg.timeout));
 	if (ret < 0) {
 		LOG_ERR("TX queue full");
 		return ret;
@@ -760,7 +762,8 @@ static int stm32_sai_sub_read(const struct device *dev, void **mem_block, size_t
 		return -EIO;
 	}
 
-	ret = k_msgq_get(&sub_data->stream.queue, &item, K_MSEC(sub_data->stream.i2s_cfg.timeout));
+	ret = k_msgq_get(&sub_data->stream.queue, &item,
+			 SYS_TIMEOUT_MS(sub_data->stream.i2s_cfg.timeout));
 	if (ret < 0) {
 		LOG_ERR("RX queue: %d", k_msgq_num_used_get(&sub_data->stream.queue));
 		return ret;
@@ -974,29 +977,21 @@ static DEVICE_API(i2s, i2s_stm32_sai_api) = {
 
 #define SAI_FIFO_THRESHOLD(node) sai_fifo_threshold[DT_ENUM_IDX(node, fifo_threshold)]
 
-#if DT_HAS_COMPAT_STATUS_OKAY(st_stm32_dma_v2bis)
-#define DMA_SLOT_BY_IDX(id, idx, slot) 0
-#else
-#define DMA_SLOT_BY_IDX(id, idx, slot) DT_DMAS_CELL_BY_IDX(id, idx, slot)
-#endif
-
-#define DMA_CHANNEL_CONFIG_BY_IDX(id, idx) DT_DMAS_CELL_BY_IDX(id, idx, channel_config)
-
 #define SAI_SUB_DMA_CHANNEL_INIT(node, src, dest)                                                  \
 	.stream = {                                                                                \
 		.dma_dev = DEVICE_DT_GET(DT_DMAS_CTLR(node)),                                      \
 		.dma_channel = DT_DMAS_CELL_BY_IDX(node, 0, channel),                              \
 		.reg = (DMA_TypeDef *)DT_REG_ADDR(DT_PHANDLE_BY_IDX(node, dmas, 0)),               \
 		.dma_cfg = {                                                                       \
-			.dma_slot = DMA_SLOT_BY_IDX(node, 0, slot),                                \
+			.dma_slot = STM32_DT_DMA_SLOT_BY_IDX(node, 0),                             \
 			.channel_direction = src##_TO_##dest,                                      \
 			.dma_callback = dma_callback,                                              \
 			.channel_priority = STM32_DMA_CONFIG_PRIORITY(                             \
-				DMA_CHANNEL_CONFIG_BY_IDX(node, 0)),                               \
+				STM32_DT_DMA_CHANNEL_CONFIG_BY_IDX(node, 0)),                      \
 			.source_data_size = STM32_DMA_CONFIG_##src##_DATA_SIZE(                    \
-				DMA_CHANNEL_CONFIG_BY_IDX(node, 0)),                               \
+				STM32_DT_DMA_CHANNEL_CONFIG_BY_IDX(node, 0)),                      \
 			.dest_data_size = STM32_DMA_CONFIG_##dest##_DATA_SIZE(                     \
-				DMA_CHANNEL_CONFIG_BY_IDX(node, 0)),                               \
+				STM32_DT_DMA_CHANNEL_CONFIG_BY_IDX(node, 0)),                      \
 		},                                                                                 \
 		.stream_start = stream_start,                                                      \
 		.queue_drop = queue_drop,                                                          \

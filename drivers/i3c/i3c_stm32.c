@@ -45,7 +45,6 @@ LOG_MODULE_REGISTER(i3c_stm32, CONFIG_I3C_LOG_LEVEL);
 #define STM32_I3C_SCLH_I2C_MIN_FMP_NS 260ull
 #define STM32_I3C_SCLL_OD_MIN_FM_NS   1320ull
 #define STM32_I3C_SCLL_OD_MIN_FMP_NS  500ull
-#define STM32_I3C_SCLL_OD_MIN_I3C_NS  200ull
 
 #define STM32_I3C_SCLL_PP_MIN_NS  32ull
 #define STM32_I3C_SCLH_I3C_MIN_NS 32ull
@@ -55,6 +54,9 @@ LOG_MODULE_REGISTER(i3c_stm32, CONFIG_I3C_LOG_LEVEL);
 #define STM32_I3C_TCAS_MIN_NS     38.4
 
 #define STM32_I3C_TRANSFER_TIMEOUT K_MSEC(100)
+
+/* The IBI data register holds a single 32-bit word */
+#define STM32_I3C_IBI_MAX_PAYLOAD_SIZE 4U
 
 #ifdef CONFIG_I3C_STM32_DMA
 K_HEAP_DEFINE(stm32_i3c_fifo_heap, CONFIG_I3C_STM32_DMA_FIFO_HEAP_SIZE);
@@ -174,7 +176,13 @@ struct i3c_stm32_data {
 		uint8_t addr[4];  /* List of target addresses */
 		uint8_t num_addr; /* Number of valid addresses */
 	} ibi;
-	bool hj_pm_lock;           /* Used as flag for setting pm */
+	bool hj_pm_lock; /* Used as flag for setting pm */
+#ifdef CONFIG_I3C_TARGET
+	/* Signals completion of an IBI raised by us as a target */
+	struct k_sem ibi_sem;
+	/* Set by the error ISR when the IBI in flight did not complete */
+	bool ibi_err;
+#endif /*CONFIG_I3C_TARGET*/
 #endif
 
 #ifdef CONFIG_I3C_TARGET
@@ -535,10 +543,12 @@ static int i3c_stm32_calc_scll_od_sclh_i2c(const struct device *dev, uint32_t i2
 				return -EINVAL;
 			}
 		} else {
+			struct i3c_stm32_data *data = dev->data;
+			uint64_t od_tlow_min_ns = MAX(data->drv_data.ctrl_config.scl_od_min.low_ns,
+						      I3C_OD_TLOW_MIN_NS);
+
 			/* Assume no I2C devices on the bus */
-			*scll_od = DIV_ROUND_UP(STM32_I3C_SCLL_OD_MIN_I3C_NS * i3c_clock,
-						1000000000ull) -
-				   1;
+			*scll_od = DIV_ROUND_UP(od_tlow_min_ns * i3c_clock, 1000000000ull) - 1;
 			*sclh_i2c = 0;
 		}
 	}
@@ -548,9 +558,9 @@ static int i3c_stm32_calc_scll_od_sclh_i2c(const struct device *dev, uint32_t i2
 }
 
 static int i3c_stm32_calc_scll_pp_sclh_i3c(uint32_t i3c_bus_freq, uint32_t i3c_clock,
-					   uint8_t *scll_pp, uint8_t *sclh_i3c)
+					   uint8_t *scll_pp, uint8_t *sclh_i3c, uint32_t min_sclh)
 {
-	*sclh_i3c = DIV_ROUND_UP(STM32_I3C_SCLH_I3C_MIN_NS * i3c_clock, 1000000000ull) - 1;
+	*sclh_i3c = DIV_ROUND_UP((uint64_t)min_sclh * i3c_clock, 1000000000ull) - 1;
 	*scll_pp = DIV_ROUND_UP(i3c_clock, i3c_bus_freq) - *sclh_i3c - 2;
 
 	if (*scll_pp < DIV_ROUND_UP(STM32_I3C_SCLL_PP_MIN_NS * i3c_clock, 1000000000ull) - 1) {
@@ -588,6 +598,8 @@ static int i3c_stm32_config_clk_wave(const struct device *dev)
 	uint8_t scll_pp = 0;
 	uint8_t sclh_i3c = 0;
 	uint32_t clk_wave = 0;
+	uint32_t sclh_i3c_min_ns;
+	bool i3c_enable_state;
 
 	LOG_DBG("I3C Clock = %u, I2C Bus Freq = %u, I3C Bus Freq = %u", i3c_clock, i2c_bus_freq,
 		i3c_bus_freq);
@@ -598,7 +610,20 @@ static int i3c_stm32_config_clk_wave(const struct device *dev)
 		return ret;
 	}
 
-	ret = i3c_stm32_calc_scll_pp_sclh_i3c(i3c_bus_freq, i3c_clock, &scll_pp, &sclh_i3c);
+	/*
+	 * A single SCLH_I3C field is shared by the Open-Drain and Push-Pull
+	 * high phases. Program it from the strictest requirement: the larger
+	 * of the OD and PP minimum high periods, but never below the hardware
+	 * minimum. The hardware floor is required because i3c_bus_init() only
+	 * raises the OD high period for the first broadcast and then restores
+	 * the configured value, which may be lower than the STM32 minimum.
+	 */
+	sclh_i3c_min_ns = MAX(data->drv_data.ctrl_config.scl_od_min.high_ns,
+			      data->drv_data.ctrl_config.scl_pp_min.high_ns);
+	sclh_i3c_min_ns = MAX(sclh_i3c_min_ns, STM32_I3C_SCLH_I3C_MIN_NS);
+
+	ret = i3c_stm32_calc_scll_pp_sclh_i3c(i3c_bus_freq, i3c_clock, &scll_pp, &sclh_i3c,
+					      sclh_i3c_min_ns);
 	if (ret != 0) {
 		LOG_ERR("Cannot calculate the timing for TimingReg0, err=%d", ret);
 		return ret;
@@ -609,7 +634,17 @@ static int i3c_stm32_config_clk_wave(const struct device *dev)
 
 	LOG_DBG("TimigReg0 = 0x%08x", clk_wave);
 
+	/* TIMINGR0 is read-only while the peripheral is enabled. */
+	i3c_enable_state = LL_I3C_IsEnabled(i3c);
+	if (i3c_enable_state) {
+		LL_I3C_Disable(i3c);
+	}
+
 	LL_I3C_ConfigClockWaveForm(i3c, clk_wave);
+
+	if (i3c_enable_state) {
+		LL_I3C_Enable(i3c);
+	}
 
 	return 0;
 }
@@ -779,6 +814,8 @@ static int i3c_stm32_configure(const struct device *dev, enum i3c_config_type ty
 		}
 		data->drv_data.ctrl_config.scl.i3c = ctrl_cfg->scl.i3c;
 		data->drv_data.ctrl_config.scl.i2c = ctrl_cfg->scl.i2c;
+		data->drv_data.ctrl_config.scl_od_min = ctrl_cfg->scl_od_min;
+		data->drv_data.ctrl_config.scl_pp_min = ctrl_cfg->scl_pp_min;
 	}
 
 	ret = i3c_stm32_activate(dev);
@@ -1627,11 +1664,22 @@ static void i3c_stm32_target_init(const struct device *dev, uint8_t mipi_instanc
 	/* Disable optional target-side features */
 	LL_I3C_DisableControllerRoleReq(i3c);
 	LL_I3C_DisableHotJoin(i3c);
-	LL_I3C_DisableIBI(i3c);
 
 	/* Configure baseline target capabilities and protocol defaults. */
-	LL_I3C_SetDeviceIBIPayload(i3c, LL_I3C_IBI_NO_ADDITIONAL_DATA);
+#ifdef CONFIG_I3C_USE_IBI
+	/*
+	 * Allow IBIs; the controller may still gate them at runtime via
+	 * ENEC/DISEC. IBIEN is only writable while the peripheral is disabled.
+	 */
+	LL_I3C_EnableIBI(i3c);
+
+	/* Advertise in the BCR that our IBIs carry a Mandatory Data Byte */
+	LL_I3C_SetDeviceIBIPayload(i3c, LL_I3C_IBI_ADDITIONAL_DATA);
 	LL_I3C_ConfigNbIBIAddData(i3c, LL_I3C_PAYLOAD_1_BYTE);
+#else
+	LL_I3C_DisableIBI(i3c);
+	LL_I3C_SetDeviceIBIPayload(i3c, LL_I3C_IBI_NO_ADDITIONAL_DATA);
+#endif /* CONFIG_I3C_USE_IBI */
 	LL_I3C_SetGrpAddrHandoffSupport(i3c, LL_I3C_HANDOFF_GRP_ADDR_NOT_SUPPORTED);
 	LL_I3C_SetDataTurnAroundTime(i3c, LL_I3C_TURNAROUND_TIME_TSCO_LESS_12NS);
 	LL_I3C_SetMiddleByteTurnAround(i3c, 0);
@@ -1644,13 +1692,18 @@ static void i3c_stm32_target_init(const struct device *dev, uint8_t mipi_instanc
 	/* Enable I3C block */
 	LL_I3C_Enable(i3c);
 
-	/* Disable Interrupts */
+	/* Enable Interrupts */
 	LL_I3C_EnableIT_DAUPD(i3c);
 	LL_I3C_EnableIT_FC(i3c);
 	LL_I3C_EnableIT_RXFNE(i3c);
 	LL_I3C_EnableIT_TXFNF(i3c);
 	LL_I3C_EnableIT_ERR(i3c);
 	LL_I3C_EnableIT_WKP(i3c);
+
+#ifdef CONFIG_I3C_USE_IBI
+	/* Signals that an IBI we requested has finished on the bus */
+	LL_I3C_EnableIT_IBIEND(i3c);
+#endif /* CONFIG_I3C_USE_IBI */
 
 	data->msg_state = STM32_I3C_MSG_IDLE;
 	data->sf_state = STM32_I3C_SF_IDLE;
@@ -1666,6 +1719,12 @@ static int i3c_stm32_init(const struct device *dev)
 	int ret;
 
 	k_mutex_init(&data->bus_mutex);
+
+#if defined(CONFIG_I3C_USE_IBI) && defined(CONFIG_I3C_TARGET)
+	/* Given by the IBIEND/error ISR in either role; empty so a request blocks */
+	k_sem_init(&data->ibi_sem, 0, 1);
+#endif /* CONFIG_I3C_USE_IBI && CONFIG_I3C_TARGET */
+
 	config->irq_config_func(dev);
 
 #ifdef CONFIG_I3C_TARGET
@@ -2128,6 +2187,14 @@ static void i3c_stm32_event_isr(void *arg)
 		i3c_stm32_isr_controller_ibi(dev);
 	}
 #endif /*CONFIG_I3C_CONTROLLER*/
+
+#ifdef CONFIG_I3C_TARGET
+	/* Our IBI finished. Clear the sticky flag or the ISR re-fires forever */
+	if (LL_I3C_IsActiveFlag_IBIEND(i3c) && LL_I3C_IsEnabledIT_IBIEND(i3c)) {
+		LL_I3C_ClearFlag_IBIEND(i3c);
+		k_sem_give(&data->ibi_sem);
+	}
+#endif /*CONFIG_I3C_TARGET*/
 #endif /*CONFIG_I3C_USE_IBI*/
 
 	if (LL_I3C_IsActiveFlag_WKP(i3c)) {
@@ -2164,8 +2231,17 @@ static int i3c_stm32_error(void *arg)
 
 	k_sem_give(&data->device_sync_sem);
 
-	(void)pm_device_runtime_put(dev);
-	pm_policy_state_lock_put(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
+#if defined(CONFIG_I3C_USE_IBI) && defined(CONFIG_I3C_TARGET)
+	/* A NACKed/aborted IBI never raises IBIEND; release the waiter here */
+	data->ibi_err = true;
+	k_sem_give(&data->ibi_sem);
+#endif /* CONFIG_I3C_USE_IBI && CONFIG_I3C_TARGET */
+
+	/* Only controller transfers take a PM reference; the target waiter frees its own */
+	if (ll_i3c_is_in_controller_mode(i3c)) {
+		(void)pm_device_runtime_put(dev);
+		pm_policy_state_lock_put(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
+	}
 
 	return 1;
 }
@@ -2331,6 +2407,102 @@ int i3c_stm32_ibi_disable(const struct device *dev, struct i3c_device_desc *targ
 }
 #endif /* CONFIG_I3C_CONTROLLER*/
 
+#ifdef CONFIG_I3C_TARGET
+/* Loads the payload and asks the hardware to start an IBI, without waiting for it */
+static int i3c_stm32_target_ibi_start_tir(const struct device *dev, struct i3c_ibi *request)
+{
+	const struct i3c_stm32_config *config = dev->config;
+	I3C_TypeDef *i3c = config->i3c;
+	uint32_t payload = 0;
+
+	/* Without a dynamic address there is nothing to arbitrate with */
+	if (LL_I3C_GetOwnDynamicAddress(i3c) == 0U) {
+		LOG_ERR("No dynamic address assigned, cannot raise an IBI");
+		return -EINVAL;
+	}
+
+	/* IBIEN tracks the controller's current permission (set/cleared by ENEC/DISEC) */
+	if (!LL_I3C_IsEnabledIBI(i3c)) {
+		LOG_ERR("IBIs are currently disabled by the controller");
+		return -EACCES;
+	}
+
+	if (request->payload_len > STM32_I3C_IBI_MAX_PAYLOAD_SIZE) {
+		LOG_ERR("IBI payload of %u bytes exceeds the %u byte limit", request->payload_len,
+			STM32_I3C_IBI_MAX_PAYLOAD_SIZE);
+		return -ENOMEM;
+	}
+
+	/* The payload must match the MDB capability we advertised in the BCR */
+	if (LL_I3C_GetDeviceIBIPayload(i3c) == LL_I3C_IBI_ADDITIONAL_DATA) {
+		if ((request->payload == NULL) || (request->payload_len == 0U)) {
+			LOG_ERR("IBI requires a mandatory data byte");
+			return -EINVAL;
+		}
+	} else if (request->payload_len != 0U) {
+		LOG_ERR("IBI must not carry a payload");
+		return -EINVAL;
+	}
+
+	/* IBIDR is little endian, so the mandatory data byte goes in the LSB */
+	for (uint8_t i = 0; i < request->payload_len; i++) {
+		payload |= (uint32_t)request->payload[i] << (i * 8U);
+	}
+
+	LL_I3C_SetIBIPayload(i3c, payload);
+
+	/* Kicks off the IBI; bus arbitration then runs in hardware */
+	LL_I3C_TargetHandleMessage(i3c, LL_I3C_TARGET_MTYPE_IBI, request->payload_len);
+
+	return 0;
+}
+
+static int i3c_stm32_target_ibi_raise(const struct device *dev, struct i3c_ibi *request)
+{
+	struct i3c_stm32_data *data = dev->data;
+	int ret;
+
+	if (request == NULL) {
+		return -EINVAL;
+	}
+
+	/* Hot-join and controller-role requests are not supported yet */
+	if (request->ibi_type != I3C_IBI_TARGET_INTR) {
+		return -ENOTSUP;
+	}
+
+	/* Only one IBI in flight: there is a single IBIDR register */
+	k_mutex_lock(&data->bus_mutex, K_FOREVER);
+
+	/* Drop a stale completion from a prior timed-out request */
+	k_sem_reset(&data->ibi_sem);
+	data->ibi_err = false;
+
+	/* Keep the peripheral out of suspend while we wait */
+	(void)pm_device_runtime_get(dev);
+	pm_policy_state_lock_get(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
+
+	ret = i3c_stm32_target_ibi_start_tir(dev, request);
+	if (ret == 0) {
+		/* Timeout-bounded: the controller decides when (or whether) to answer */
+		if (k_sem_take(&data->ibi_sem, STM32_I3C_TRANSFER_TIMEOUT) != 0) {
+			LOG_ERR("IBI request timed out");
+			ret = -ETIMEDOUT;
+		} else if (data->ibi_err) {
+			LOG_ERR("IBI request failed on the bus");
+			ret = -EIO;
+		}
+	}
+
+	pm_policy_state_lock_put(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
+	(void)pm_device_runtime_put(dev);
+
+	k_mutex_unlock(&data->bus_mutex);
+
+	return ret;
+}
+#endif /* CONFIG_I3C_TARGET */
+
 #endif /* CONFIG_I3C_USE_IBI */
 
 #ifdef CONFIG_I3C_STM32_DMA
@@ -2445,6 +2617,9 @@ static DEVICE_API(i3c, i3c_stm32_driver_api) = {
 	.ibi_enable = i3c_stm32_ibi_enable,
 	.ibi_disable = i3c_stm32_ibi_disable,
 #endif /*CONFIG_I3C_CONTROLLER*/
+#ifdef CONFIG_I3C_TARGET
+	.ibi_raise = i3c_stm32_target_ibi_raise,
+#endif /*CONFIG_I3C_TARGET*/
 #endif /*CONFIG_I3C_USE_IBI*/
 #ifdef CONFIG_I3C_RTIO
 	.iodev_submit = i3c_iodev_submit_fallback,
@@ -2459,31 +2634,31 @@ static DEVICE_API(i3c, i3c_stm32_driver_api) = {
 
 #ifdef CONFIG_I3C_STM32_DMA
 #define STM32_I3C_DMA_CHANNEL_INIT(index, dir, dir_cap, src_dev, dest_dev)                         \
-	.dma_dev = DEVICE_DT_GET(STM32_DMA_CTLR(index, dir)),                                      \
+	.dma_dev = DEVICE_DT_GET(STM32_DT_INST_DMA_CTLR(index, dir)),                              \
 	.dma_channel = DT_INST_DMAS_CELL_BY_NAME(index, dir, channel),                             \
 	.dma_cfg = {                                                                               \
-		.dma_slot = STM32_DMA_SLOT(index, dir, slot),                                      \
+		.dma_slot = STM32_DT_INST_DMA_SLOT(index, dir),                                    \
 		.channel_direction =                                                               \
-				STM32_DMA_CONFIG_DIRECTION(STM32_DMA_CHANNEL_CONFIG(index, dir)),  \
+			STM32_DMA_CONFIG_DIRECTION(STM32_DT_INST_DMA_CHANNEL_CONFIG(index, dir)),  \
 		.channel_priority =                                                                \
-				STM32_DMA_CONFIG_PRIORITY(STM32_DMA_CHANNEL_CONFIG(index, dir)),   \
+			STM32_DMA_CONFIG_PRIORITY(STM32_DT_INST_DMA_CHANNEL_CONFIG(index, dir)),   \
 		.source_data_size = STM32_DMA_CONFIG_##src_dev##_DATA_SIZE(                        \
-				STM32_DMA_CHANNEL_CONFIG(index, dir)),                             \
+			STM32_DT_INST_DMA_CHANNEL_CONFIG(index, dir)),                             \
 		.dest_data_size = STM32_DMA_CONFIG_##dest_dev##_DATA_SIZE(                         \
-				STM32_DMA_CHANNEL_CONFIG(index, dir)),                             \
+			STM32_DT_INST_DMA_CHANNEL_CONFIG(index, dir)),                             \
 		/* single transfers (burst length = data size) */                                  \
 		.source_burst_length = STM32_DMA_CONFIG_##src_dev##_DATA_SIZE(                     \
-				STM32_DMA_CHANNEL_CONFIG(index, dir)),                             \
+			STM32_DT_INST_DMA_CHANNEL_CONFIG(index, dir)),                             \
 		.dest_burst_length = STM32_DMA_CONFIG_##dest_dev##_DATA_SIZE(                      \
-				STM32_DMA_CHANNEL_CONFIG(index, dir)),                             \
+			STM32_DT_INST_DMA_CHANNEL_CONFIG(index, dir)),                             \
 		.block_count = 1,                                                                  \
 		.dma_callback = i3c_stm32_dma_##dir##_cb,                                          \
 	},                                                                                         \
-	.src_addr_increment =                                                                      \
-		STM32_DMA_CONFIG_##src_dev##_ADDR_INC(STM32_DMA_CHANNEL_CONFIG(index, dir)),       \
-	.dst_addr_increment =                                                                      \
-		STM32_DMA_CONFIG_##dest_dev##_ADDR_INC(STM32_DMA_CHANNEL_CONFIG(index, dir)),      \
-	.fifo_threshold = STM32_DMA_FEATURES_FIFO_THRESHOLD(STM32_DMA_FEATURES(index, dir)),
+	.src_addr_increment = STM32_DMA_CONFIG_##src_dev##_ADDR_INC(                               \
+		STM32_DT_INST_DMA_CHANNEL_CONFIG(index, dir)),                                     \
+	.dst_addr_increment = STM32_DMA_CONFIG_##dest_dev##_ADDR_INC(                              \
+		STM32_DT_INST_DMA_CHANNEL_CONFIG(index, dir)),                                     \
+	.fifo_threshold = STM32_DMA_FEATURES_FIFO_THRESHOLD(STM32_DT_INST_DMA_FEATURES(index, dir)),
 #endif
 
 #ifdef CONFIG_I3C_STM32_DMA
@@ -2567,6 +2742,9 @@ static DEVICE_API(i3c, i3c_stm32_driver_api) = {
 	static struct i3c_stm32_data i3c_stm32_data_##index = {                                    \
 		.drv_data.ctrl_config.scl.i2c = DT_INST_PROP_OR(index, i2c_scl_hz, 0),             \
 		.drv_data.ctrl_config.scl.i3c = DT_INST_PROP_OR(index, i3c_scl_hz, 0),             \
+		.drv_data.ctrl_config.scl_od_min.high_ns = DT_INST_PROP(index, od_thigh_min_ns),   \
+		.drv_data.ctrl_config.scl_od_min.low_ns = DT_INST_PROP(index, od_tlow_min_ns),     \
+		.drv_data.ctrl_config.scl_pp_min.high_ns = DT_INST_PROP(index, pp_thigh_min_ns),   \
 		STM32_I3C_DMA_CHANNEL(index, rx, RX, PERIPHERAL, MEMORY)                           \
 		STM32_I3C_DMA_CHANNEL(index, tx, TX, MEMORY, PERIPHERAL)                           \
 		STM32_I3C_DMA_CHANNEL(index, tc, TC, MEMORY, PERIPHERAL)                           \

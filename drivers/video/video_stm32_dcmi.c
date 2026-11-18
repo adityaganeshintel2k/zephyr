@@ -186,6 +186,14 @@ static int stm32_dma_init(const struct device *dev)
 		return ret;
 	}
 
+#if DT_HAS_COMPAT_STATUS_OKAY(st_stm32_dma_v1)
+	if (STM32_DMA_FEATURES_FIFO_THRESHOLD(DT_INST_DMAS_CELL_BY_IDX(0, 0, features)) ==
+	    DMA_FIFO_THRESHOLD_FULL) {
+		hdma.Init.FIFOMode = DMA_FIFOMODE_ENABLE;
+		hdma.Init.FIFOThreshold = DMA_FIFO_THRESHOLD_FULL;
+	}
+#endif
+
 	hdma.Instance = STM32_DMA_GET_INSTANCE(dma->reg, dma->channel);
 
 	/* Initialize DMA HAL */
@@ -266,14 +274,14 @@ static int video_stm32_dcmi_set_stream(const struct device *dev, bool enable,
 	int err;
 
 	if (!enable) {
-		err = video_stream_stop(config->sensor_dev, type);
-		if (err < 0) {
-			return err;
-		}
-
 		hal_ret = HAL_DCMI_Stop(&data->hdcmi);
 		if (hal_ret != HAL_OK) {
 			LOG_DBG("Failed to stop DCMI");
+		}
+
+		err = video_stream_stop(config->sensor_dev, type);
+		if (err < 0) {
+			return err;
 		}
 
 		/* Release the video buffer allocated when start streaming */
@@ -426,35 +434,44 @@ static int video_stm32_dcmi_get_caps(const struct device *dev, struct video_caps
 	return video_get_caps(config->sensor_dev, caps);
 }
 
+#define STM32_DCMI_MAX_FRAME_DROP    4
+/* Capture rates the DCMI frame control supports: every frame, every 2nd, every 4th */
+#define STM32_DCMI_NUM_CAPTURE_RATES 3
+
 static int video_stm32_dcmi_enum_frmival(const struct device *dev, struct video_frmival_enum *fie)
 {
 	const struct video_stm32_dcmi_config *config = dev->config;
+	uint32_t capture_rate = BIT(fie->index % STM32_DCMI_NUM_CAPTURE_RATES);
+	struct video_frmival_enum sensor_fie = {
+		.index = fie->index / STM32_DCMI_NUM_CAPTURE_RATES,
+		.format = fie->format,
+	};
 	int ret;
 
-	ret = video_enum_frmival(config->sensor_dev, fie);
+	/*
+	 * Report each sensor interval once per capture rate: dropping every 2nd or 4th
+	 * frame multiplies the interval and its step, which one stepwise range with the
+	 * sensor step cannot express.
+	 */
+	ret = video_enum_frmival(config->sensor_dev, &sensor_fie);
 	if (ret < 0) {
 		return ret;
 	}
 
-	/* Adapt the interval in order to report the frame drop capabilities */
-	if (fie->type == VIDEO_FRMIVAL_TYPE_DISCRETE) {
-		struct video_frmival discrete = fie->discrete;
-
-		fie->type = VIDEO_FRMIVAL_TYPE_STEPWISE;
-		fie->stepwise.max = discrete;
-		fie->stepwise.min.denominator = discrete.denominator;
-		fie->stepwise.min.numerator = discrete.numerator * 4;
-		fie->stepwise.step.denominator = discrete.denominator;
-		fie->stepwise.step.numerator = discrete.numerator * 2;
+	fie->type = sensor_fie.type;
+	if (sensor_fie.type == VIDEO_FRMIVAL_TYPE_DISCRETE) {
+		fie->discrete = sensor_fie.discrete;
+		fie->discrete.numerator *= capture_rate;
 	} else {
-		fie->stepwise.min.numerator *= 4;
-		fie->stepwise.step.numerator *= 2;
+		fie->stepwise = sensor_fie.stepwise;
+		fie->stepwise.min.numerator *= capture_rate;
+		fie->stepwise.max.numerator *= capture_rate;
+		fie->stepwise.step.numerator *= capture_rate;
 	}
 
 	return 0;
 }
 
-#define STM32_DCMI_MAX_FRAME_DROP	4
 static int video_stm32_dcmi_set_frmival(const struct device *dev, struct video_frmival *frmival)
 {
 	const struct video_stm32_dcmi_config *config = dev->config;
@@ -579,20 +596,20 @@ static void video_stm32_dcmi_irq_config_func(const struct device *dev)
 	.reg = (DMA_TypeDef *)DT_REG_ADDR(						\
 				DT_PHANDLE_BY_IDX(DT_DRV_INST(0), dmas, 0)),		\
 	.cfg = {									\
-		.dma_slot = STM32_DMA_SLOT_BY_IDX(index, 0, slot),			\
+		.dma_slot = STM32_DT_INST_DMA_SLOT_BY_IDX(index, 0),			\
 		.channel_direction = STM32_DMA_CONFIG_DIRECTION(			\
-			STM32_DMA_CHANNEL_CONFIG_BY_IDX(index, 0)),			\
+			STM32_DT_INST_DMA_CHANNEL_CONFIG_BY_IDX(index, 0)),		\
 		.source_data_size = STM32_DMA_CONFIG_##src_dev##_DATA_SIZE(		\
-			STM32_DMA_CHANNEL_CONFIG_BY_IDX(index, 0)),			\
+			STM32_DT_INST_DMA_CHANNEL_CONFIG_BY_IDX(index, 0)),		\
 		.dest_data_size = STM32_DMA_CONFIG_##dest_dev##_DATA_SIZE(		\
-			STM32_DMA_CHANNEL_CONFIG_BY_IDX(index, 0)),			\
-		/* single transfers (burst length = data size) */			\
+			STM32_DT_INST_DMA_CHANNEL_CONFIG_BY_IDX(index, 0)),		\
+		/* single transfers on the DCMI side, 4 beat bursts to memory */	\
 		.source_burst_length = STM32_DMA_CONFIG_##src_dev##_DATA_SIZE(		\
-			STM32_DMA_CHANNEL_CONFIG_BY_IDX(index, 0)),			\
-		.dest_burst_length = STM32_DMA_CONFIG_##dest_dev##_DATA_SIZE(		\
-			STM32_DMA_CHANNEL_CONFIG_BY_IDX(index, 0)),			\
+			STM32_DT_INST_DMA_CHANNEL_CONFIG_BY_IDX(index, 0)),		\
+		.dest_burst_length = 4 * STM32_DMA_CONFIG_##dest_dev##_DATA_SIZE(	\
+			STM32_DT_INST_DMA_CHANNEL_CONFIG_BY_IDX(index, 0)),		\
 		.channel_priority = STM32_DMA_CONFIG_PRIORITY(				\
-			STM32_DMA_CHANNEL_CONFIG_BY_IDX(index, 0)),			\
+			STM32_DT_INST_DMA_CHANNEL_CONFIG_BY_IDX(index, 0)),		\
 		.dma_callback = dcmi_dma_callback,					\
 	},										\
 

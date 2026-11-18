@@ -30,8 +30,8 @@ struct phy_mii_dev_config {
 	const struct device * const mdio;
 #if ANY_RESET_GPIO
 	const struct gpio_dt_spec reset_gpio;
-	uint32_t reset_assert_duration_us;
-	uint32_t reset_deassertion_timeout_ms;
+	uint32_t reset_assert_us;
+	uint32_t reset_deassert_us;
 #endif /* ANY_RESET_GPIO */
 };
 
@@ -40,7 +40,7 @@ struct phy_mii_dev_data {
 	phy_callback_t cb;
 	void *cb_data;
 	struct phy_link_state state;
-	struct k_sem sem;
+	struct k_mutex mutex;
 	struct k_work_delayable monitor_work;
 	bool gigabit_supported;
 	bool autoneg_in_progress;
@@ -117,7 +117,7 @@ static int reset(const struct device *dev)
 		}
 
 		/* assertion time */
-		k_busy_wait(cfg->reset_assert_duration_us);
+		k_busy_wait(cfg->reset_assert_us);
 
 		ret = gpio_pin_set_dt(&cfg->reset_gpio, 0);
 		if (ret < 0) {
@@ -125,7 +125,7 @@ static int reset(const struct device *dev)
 			return ret;
 		}
 
-		k_msleep(cfg->reset_deassertion_timeout_ms);
+		k_usleep(cfg->reset_deassert_us);
 
 		return 0;
 	}
@@ -332,7 +332,7 @@ static void monitor_work_handler(struct k_work *work)
 	const struct device *dev = data->dev;
 	int rc;
 
-	if (k_sem_take(&data->sem, K_NO_WAIT) == 0) {
+	if (k_mutex_lock(&data->mutex, K_NO_WAIT) == 0) {
 		if (data->autoneg_in_progress) {
 			rc = check_autonegotiation_completion(dev);
 		} else {
@@ -342,12 +342,12 @@ static void monitor_work_handler(struct k_work *work)
 
 		data->autoneg_in_progress = (rc == -EINPROGRESS);
 
-		k_sem_give(&data->sem);
-
 		/* If link state has changed and a callback is set, invoke callback */
 		if (rc == 0) {
 			invoke_link_cb(dev);
 		}
+
+		k_mutex_unlock(&data->mutex);
 	}
 
 	k_work_reschedule(&data->monitor_work, data->autoneg_in_progress
@@ -374,7 +374,7 @@ static int phy_mii_cfg_link(const struct device *dev, enum phy_link_speed adv_sp
 	const struct phy_mii_dev_config *const cfg = dev->config;
 	int ret = 0;
 
-	k_sem_take(&data->sem, K_FOREVER);
+	k_mutex_lock(&data->mutex, K_FOREVER);
 
 	if ((flags & PHY_FLAG_AUTO_NEGOTIATION_DISABLED) != 0U) {
 		/* If auto-negotiation is disabled, only one speed can be selected.
@@ -409,7 +409,7 @@ static int phy_mii_cfg_link(const struct device *dev, enum phy_link_speed adv_sp
 	}
 
 cfg_link_end:
-	k_sem_give(&data->sem);
+	k_mutex_unlock(&data->mutex);
 
 	return ret;
 }
@@ -419,7 +419,7 @@ static int phy_mii_get_link_state(const struct device *dev,
 {
 	struct phy_mii_dev_data *const data = dev->data;
 
-	k_sem_take(&data->sem, K_FOREVER);
+	k_mutex_lock(&data->mutex, K_FOREVER);
 
 	memcpy(state, &data->state, sizeof(struct phy_link_state));
 
@@ -430,7 +430,7 @@ static int phy_mii_get_link_state(const struct device *dev,
 		state->is_up = false;
 	}
 
-	k_sem_give(&data->sem);
+	k_mutex_unlock(&data->mutex);
 
 	return 0;
 }
@@ -473,7 +473,9 @@ static int phy_mii_init(const struct device *dev)
 	uint32_t phy_id;
 	int ret = 0;
 
-	data->state.is_up = false;
+	data->dev = dev;
+
+	k_mutex_init(&data->mutex);
 
 	if (cfg->no_reset == false) {
 		ret = reset(dev);
@@ -527,10 +529,8 @@ static DEVICE_API(ethphy, phy_mii_driver_api) = {
 #define RESET_GPIO(n)							 \
 	.reset_gpio = GPIO_DT_SPEC_INST_GET_OR(n,			 \
 			 reset_gpios, {0}),				 \
-	.reset_assert_duration_us = DT_INST_PROP_OR(n,			 \
-			 reset_assert_duration_us, 0),			 \
-	.reset_deassertion_timeout_ms = DT_INST_PROP_OR(n,		 \
-			 reset_deassertion_timeout_ms, 0),
+	.reset_assert_us = DT_INST_PROP_OR(n, reset_assert_us, 0),	 \
+	.reset_deassert_us = DT_INST_PROP_OR(n, reset_deassert_us, 0),
 #else
 #define RESET_GPIO(n)
 #endif /* ANY_RESET_GPIO */
@@ -548,11 +548,7 @@ static const struct phy_mii_dev_config phy_mii_dev_config_##n = {	 \
 };
 
 #define PHY_MII_DATA(n)							 \
-static struct phy_mii_dev_data phy_mii_dev_data_##n = {			 \
-	.dev = DEVICE_DT_INST_GET(n),					 \
-	.cb = NULL,							 \
-	.sem = Z_SEM_INITIALIZER(phy_mii_dev_data_##n.sem, 1, 1),	 \
-};
+static struct phy_mii_dev_data phy_mii_dev_data_##n;
 
 #define PHY_MII_DEVICE(n)						\
 	PHY_MII_CONFIG(n);						\

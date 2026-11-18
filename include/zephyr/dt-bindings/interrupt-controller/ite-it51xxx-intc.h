@@ -56,6 +56,7 @@
 #define IT51XXX_IRQ_WKINTD     5
 #define IT51XXX_IRQ_WU23       6
 /* Group 1 */
+#define IT51XXX_IRQ_ADC        8
 #define IT51XXX_IRQ_SMB_A      9
 #define IT51XXX_IRQ_SMB_B      10
 #define IT51XXX_IRQ_WU26       12
@@ -74,6 +75,8 @@
 #define IT51XXX_IRQ_WU21       31
 /* Group 4 */
 #define IT51XXX_IRQ_SPI        37
+#define IT51XXX_IRQ_UART       38
+#define IT51XXX_IRQ_UART2      39
 /* Group 5 */
 #define IT51XXX_IRQ_WU50       40
 #define IT51XXX_IRQ_WU51       41
@@ -92,6 +95,7 @@
 #define IT51XXX_IRQ_WU65       53
 #define IT51XXX_IRQ_WU66       54
 #define IT51XXX_IRQ_WU67       55
+
 /* Group 7 */
 /** RTC alarm1 interrupt */
 #define IT51XXX_IRQ_RTCT_ALARM1 56
@@ -189,6 +193,7 @@
 /* Group 20 */
 #define IT51XXX_IRQ_SMB_E      160
 #define IT51XXX_IRQ_SMB_F      161
+#define IT51XXX_IRQ_CRYPTO     162
 #define IT51XXX_IRQ_WU40       163
 #define IT51XXX_IRQ_WU45       166
 /* Group 21 */

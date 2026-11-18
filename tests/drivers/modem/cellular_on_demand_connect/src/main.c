@@ -30,6 +30,7 @@
 #include <zephyr/ztest.h>
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
+#include <zephyr/drivers/cellular.h>
 #include <zephyr/drivers/serial/uart_emul.h>
 #include <zephyr/drivers/modem/modem_cellular.h>
 #include <zephyr/pm/device.h>
@@ -41,6 +42,7 @@
 #include <zephyr/modem/pipe.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/crc.h>
 
 #include <modem_backend_mock.h>
 
@@ -58,6 +60,7 @@ static struct k_event emu_events;
 /* Knobs the tests flip to steer the emulated modem. */
 static atomic_t emu_registered;    /* status reported on the next AT+CEREG? poll */
 static atomic_t emu_hold_connect;  /* count ATD but withhold CONNECT */
+static atomic_t emu_hold_csq;      /* count AT+CSQ but withhold its answer */
 
 /* ------------------------------------------------------------------------- */
 /* Modem (DCE) emulator                                                      */
@@ -151,7 +154,12 @@ static void dlci1_respond(const char *line)
 		k_event_post(&emu_events, EV_APN_DONE);
 	} else if (strcmp(line, "AT+CSQ") == 0) {
 		atomic_inc(&csq_count);
-		dce_send(dce_dlci1_pipe, "+CSQ: 20,99\r\nOK\r\n");
+		if (!atomic_get(&emu_hold_csq)) {
+			dce_send(dce_dlci1_pipe, "+CSQ: 20,99\r\nOK\r\n");
+		}
+	} else if (strcmp(line, "AT+CESQ") == 0) {
+		/* Fails every RSRP / RSRQ query. */
+		dce_send(dce_dlci1_pipe, "ERROR\r\n");
 	} else if (strcmp(line, "AT+CEREG?") == 0) {
 		/* <n>,<stat>: stat 1 registered on the home LTE network, stat 0 not. */
 		if (atomic_get(&emu_registered)) {
@@ -249,10 +257,24 @@ static uint8_t ppp_frame[256];
 static size_t ppp_frame_len;
 static bool ppp_frame_escaped;
 
+static size_t dce_ppp_put_escaped(uint8_t *out, size_t pos, uint8_t byte)
+{
+	if (byte == PPP_FLAG || byte == PPP_ESCAPE || byte < 0x20) {
+		out[pos++] = PPP_ESCAPE;
+		out[pos++] = byte ^ PPP_ESCAPE_MASK;
+	} else {
+		out[pos++] = byte;
+	}
+
+	return pos;
+}
+
 static void dce_ppp_send(const uint8_t *payload, size_t len)
 {
+	static const uint8_t header[] = {PPP_ADDRESS, PPP_CONTROL};
 	uint8_t out[64];
 	size_t pos = 0;
+	uint16_t fcs;
 
 	out[pos++] = PPP_FLAG;
 	out[pos++] = PPP_ADDRESS;
@@ -260,19 +282,13 @@ static void dce_ppp_send(const uint8_t *payload, size_t len)
 	out[pos++] = PPP_CONTROL ^ PPP_ESCAPE_MASK;
 
 	for (size_t i = 0; i < len; i++) {
-		if (payload[i] == PPP_FLAG || payload[i] == PPP_ESCAPE || payload[i] < 0x20) {
-			out[pos++] = PPP_ESCAPE;
-			out[pos++] = payload[i] ^ PPP_ESCAPE_MASK;
-		} else {
-			out[pos++] = payload[i];
-		}
+		pos = dce_ppp_put_escaped(out, pos, payload[i]);
 	}
 
-	/* modem_ppp strips the frame tail without checking it, so any two bytes
-	 * that need no escaping will do for the FCS.
-	 */
-	out[pos++] = 0xAA;
-	out[pos++] = 0xBB;
+	fcs = crc16_ccitt(0xFFFF, header, sizeof(header));
+	fcs = crc16_ccitt(fcs, payload, len) ^ 0xFFFF;
+	pos = dce_ppp_put_escaped(out, pos, fcs & 0xFF);
+	pos = dce_ppp_put_escaped(out, pos, fcs >> 8);
 	out[pos++] = PPP_FLAG;
 
 	__ASSERT_NO_MSG(pos <= sizeof(out));
@@ -873,6 +889,184 @@ ZTEST(cellular_on_demand_connect, test_09_ppp_dead_while_awaiting_registration)
 
 	zassert_true(wait_for_atd(dials + 1, 20000),
 		     "a PPP drop in AWAIT_REGISTERED did not re-dial, state is %d",
+		     modem_fsm_state());
+}
+
+/* An in-band NO CARRIER is how a module reports the network dropping the call.
+ * modem_ppp parses it off the PPP channel, so the DCE emits it verbatim.
+ */
+ZTEST(cellular_on_demand_connect, test_10_in_band_no_carrier_while_awaiting_registration)
+{
+	int dials;
+	int csq;
+
+	park_in_await_dial();
+	atomic_set(&emu_registered, 0);
+	csq = atomic_get(&csq_count);
+	zassert_true(wait_for_csq(csq + 1, 4 * CONFIG_MODEM_CELLULAR_PERIODIC_SCRIPT_MS),
+		     "periodic script did not poll while parked");
+
+	admit_iface();
+	zassert_true(wait_for_state(MODEM_CELLULAR_STATE_AWAIT_REGISTERED, 20000),
+		     "modem did not rest in AWAIT_REGISTERED, state is %d", modem_fsm_state());
+	dials = atomic_get(&atd_count);
+
+	dce_send(dce_dlci2_pipe, "\r\nNO CARRIER\r\n");
+
+	zassert_true(wait_for_atd(dials + 1, 20000),
+		     "in-band NO CARRIER in AWAIT_REGISTERED did not re-dial, state is %d",
+		     modem_fsm_state());
+}
+
+/* Time for the periodic script to finish its remaining steps after AT+CSQ */
+#define PERIODIC_SCRIPT_SETTLE_MS 100
+
+/* A periodic timer that fires while another script holds the chat must rearm. */
+ZTEST(cellular_on_demand_connect, test_11_periodic_survives_busy_chat_while_awaiting_registration)
+{
+	int16_t rssi;
+	int csq;
+
+	park_in_await_dial();
+	atomic_set(&emu_registered, 0);
+	admit_iface();
+	zassert_true(wait_for_state(MODEM_CELLULAR_STATE_AWAIT_REGISTERED, 20000),
+		     "modem did not rest in AWAIT_REGISTERED, state is %d", modem_fsm_state());
+
+	csq = atomic_get(&csq_count);
+	zassert_true(wait_for_csq(csq + 1, 4 * CONFIG_MODEM_CELLULAR_PERIODIC_SCRIPT_MS),
+		     "periodic script did not poll while awaiting registration");
+	k_msleep(PERIODIC_SCRIPT_SETTLE_MS);
+
+	/* The withheld answer keeps the signal query on the chat past the periodic timer. */
+	atomic_set(&emu_hold_csq, 1);
+	zassert_equal(cellular_get_signal(modem, CELLULAR_SIGNAL_RSSI, &rssi), -EAGAIN,
+		      "signal query with a withheld answer did not time out");
+	atomic_set(&emu_hold_csq, 0);
+
+	csq = atomic_get(&csq_count);
+	zassert_true(wait_for_csq(csq + 1, 4 * CONFIG_MODEM_CELLULAR_PERIODIC_SCRIPT_MS),
+		     "periodic script stopped after finding the chat busy, state is %d",
+		     modem_fsm_state());
+}
+
+static atomic_t comms_check_count; /* CELLULAR_EVENT_MODEM_COMMS_CHECK_RESULT events seen */
+
+static void comms_check_cb(const struct device *dev, enum cellular_event event, const void *payload,
+			   void *user_data)
+{
+	atomic_inc(&comms_check_count);
+}
+
+/* Pause the periodic script and let an in-flight run finish, so the chat is
+ * free for a signal query and no periodic result reaches the FSM.
+ */
+static void quiesce_periodic(void)
+{
+	zassert_ok(cellular_modem_pause_periodic_script(modem), "pause failed");
+	k_msleep(2 * CONFIG_MODEM_CELLULAR_PERIODIC_SCRIPT_MS);
+	atomic_set(&comms_check_count, 0);
+}
+
+/* Fail more signal queries than the script-failure budget allows. */
+static void fail_signal_queries(void)
+{
+	int16_t value;
+
+	for (int i = 0; i <= CONFIG_MODEM_CELLULAR_MAX_SCRIPT_FAILURES; i++) {
+		zassert_not_ok(cellular_get_signal(modem, CELLULAR_SIGNAL_RSRP, &value),
+			       "RSRP query did not fail");
+	}
+}
+
+/* A signal query's result belongs to the caller, not to the periodic script. */
+ZTEST(cellular_on_demand_connect, test_12_signal_query_while_registered)
+{
+	int16_t value;
+
+	park_in_await_dial();
+	atomic_set(&emu_registered, 1);
+	admit_iface();
+	zassert_true(wait_for_state(MODEM_CELLULAR_STATE_REGISTERED, 20000),
+		     "modem did not reach REGISTERED, state is %d", modem_fsm_state());
+	zassert_ok(cellular_set_callback(modem, CELLULAR_EVENT_MODEM_COMMS_CHECK_RESULT,
+					 comms_check_cb, NULL),
+		   "set_callback failed");
+	quiesce_periodic();
+
+	zassert_ok(cellular_get_signal(modem, CELLULAR_SIGNAL_RSSI, &value), "RSSI query failed");
+	fail_signal_queries();
+	k_msleep(CONFIG_MODEM_CELLULAR_PERIODIC_SCRIPT_MS);
+
+	zassert_equal(0, atomic_get(&comms_check_count),
+		      "a signal query was reported as a comms check");
+	zassert_equal(MODEM_CELLULAR_STATE_REGISTERED, modem_fsm_state(),
+		      "failed signal queries dropped the call, state is %d", modem_fsm_state());
+
+	zassert_ok(cellular_set_callback(modem, 0, NULL, NULL), "set_callback failed");
+	zassert_ok(cellular_modem_resume_periodic_script(modem), "resume failed");
+}
+
+ZTEST(cellular_on_demand_connect, test_13_signal_query_while_awaiting_registration)
+{
+	int csq;
+
+	park_in_await_dial();
+	atomic_set(&emu_registered, 0);
+	csq = atomic_get(&csq_count);
+	zassert_true(wait_for_csq(csq + 1, 4 * CONFIG_MODEM_CELLULAR_PERIODIC_SCRIPT_MS),
+		     "periodic script did not poll while parked");
+	k_msleep(PERIODIC_SCRIPT_SETTLE_MS);
+
+	admit_iface();
+	zassert_true(wait_for_state(MODEM_CELLULAR_STATE_AWAIT_REGISTERED, 20000),
+		     "modem did not reach AWAIT_REGISTERED, state is %d", modem_fsm_state());
+	quiesce_periodic();
+
+	fail_signal_queries();
+	k_msleep(CONFIG_MODEM_CELLULAR_PERIODIC_SCRIPT_MS);
+
+	zassert_equal(MODEM_CELLULAR_STATE_AWAIT_REGISTERED, modem_fsm_state(),
+		      "failed signal queries suspended the modem, state is %d", modem_fsm_state());
+
+	zassert_ok(cellular_modem_resume_periodic_script(modem), "resume failed");
+	atomic_set(&emu_registered, 1);
+}
+
+/* A dial requested while the periodic script holds the chat must still dial. */
+ZTEST(cellular_on_demand_connect, test_14_dial_while_periodic_holds_chat)
+{
+	int dials;
+	int csq;
+
+	park_in_await_dial();
+	atomic_set(&emu_registered, 1);
+
+	/* The withheld answer keeps the periodic script on the chat across the dial request. */
+	atomic_set(&emu_hold_csq, 1);
+	csq = atomic_get(&csq_count);
+	zassert_true(wait_for_csq(csq + 1, 4 * CONFIG_MODEM_CELLULAR_PERIODIC_SCRIPT_MS),
+		     "periodic script did not poll while parked");
+	dials = atomic_get(&atd_count);
+
+	admit_iface();
+	zassert_true(wait_for_state(MODEM_CELLULAR_STATE_RUN_DIAL_SCRIPT, 5000),
+		     "dial request did not reach RUN_DIAL_SCRIPT, state is %d", modem_fsm_state());
+
+	/* The answer arrives on the dial channel, so the periodic script completes in the
+	 * dial state.
+	 */
+	atomic_set(&emu_hold_csq, 0);
+	dce_send(dce_dlci2_pipe, "+CSQ: 20,99\r\nOK\r\n");
+	k_msleep(PERIODIC_SCRIPT_SETTLE_MS);
+
+	zassert_equal(MODEM_CELLULAR_STATE_RUN_DIAL_SCRIPT, modem_fsm_state(),
+		      "the periodic script result completed the dial, state is %d",
+		      modem_fsm_state());
+	zassert_true(wait_for_atd(dials + 1, 4 * CONFIG_MODEM_CELLULAR_PERIODIC_SCRIPT_MS),
+		     "dial script was not retried after finding the chat busy, state is %d",
+		     modem_fsm_state());
+	zassert_true(wait_for_call_up(10000), "dial script did not complete, state is %d",
 		     modem_fsm_state());
 }
 

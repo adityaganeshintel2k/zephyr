@@ -24,8 +24,16 @@ extern "C" {
  * @brief Network buffer library
  * @defgroup net_buf Network Buffer Library
  * @since 1.0
- * @version 1.1.0
+ * @version 1.2.0
  * @ingroup os_services
+ *
+ * The functions that add, push, pull or remove data check with an assertion
+ * that the operation fits in the buffer. With
+ * @kconfig{CONFIG_NET_BUF_HARDENING} the check is always made, together with a
+ * check that the length and pointers of the buffer are consistent, and an
+ * operation that fails it leaves the buffer unchanged: functions that return a
+ * pointer return NULL, functions that return a value return 0, and functions
+ * that return nothing do not write.
  * @{
  */
 
@@ -1066,12 +1074,13 @@ struct net_buf {
 	 * ref/unref; `ref`, `flags`, `pool_id` and `user_data_size` are
 	 * byte-level views into the same storage.
 	 *
-	 * atomic_inc/dec on ref_word add/subtract 1 to/from the whole
-	 * word, but because the byte-struct layout below places `ref`
-	 * at the least-significant byte of `ref_word` regardless of
-	 * endianness, and because the ref count never overflows past
-	 * 254 (already implicit in its uint8_t domain), only the ref
-	 * byte changes -- the other three bytes are untouched.
+	 * Incrementing and decrementing ref_word adds or subtracts 1
+	 * to/from the whole word, but because the byte-struct layout
+	 * below places `ref` at the least-significant byte of `ref_word`
+	 * regardless of endianness, and because net_buf_ref() leaves a
+	 * count of 255 alone and net_buf_unref() a count of 255 or 0,
+	 * only the ref byte changes -- the other three bytes are
+	 * untouched.
 	 *
 	 * On 32-bit architectures atomic_t is 4 bytes and the byte
 	 * struct fills the slot exactly. On 64-bit, atomic_t is 8 bytes;
@@ -1585,7 +1594,9 @@ struct net_buf * __must_check net_buf_alloc_len(struct net_buf_pool *pool,
  * @brief Allocate a new buffer from a pool but with external data pointer.
  *
  * Allocate a new buffer from a pool, where the data pointer comes from the
- * user and not from the pool.
+ * user and not from the pool. The buffer starts with @a size bytes of data
+ * and no tailroom. The data is not freed together with the buffer, and has to
+ * stay valid for as long as the buffer exists.
  *
  * @param pool Which pool to allocate the buffer from.
  * @param data External data pointer
@@ -1659,6 +1670,11 @@ void net_buf_simple_reserve(struct net_buf_simple *buf, size_t reserve);
 /**
  * @brief Put a buffer into a list
  *
+ * The list is modified under a spinlock that net_buf_slist_put(),
+ * net_buf_slist_get() and net_buf_slist_purge() share, so a list that is only
+ * accessed through these functions can be used from several threads and from
+ * interrupt handlers.
+ *
  * @param list Which list to append the buffer to.
  * @param buf Buffer.
  */
@@ -1667,16 +1683,51 @@ void net_buf_slist_put(sys_slist_t *list, struct net_buf *buf);
 /**
  * @brief Get a buffer from a list.
  *
+ * The list is modified under the same spinlock as in net_buf_slist_put().
+ *
  * @param list Which list to take the buffer from.
  *
- * @return New buffer or NULL if the FIFO is empty.
+ * @return Buffer, or NULL if the list is empty.
  */
 struct net_buf * __must_check net_buf_slist_get(sys_slist_t *list);
+
+/**
+ * @brief Unreference all buffers in a list.
+ *
+ * The list is emptied in one step under the same spinlock as in
+ * net_buf_slist_put(), and the buffers are unreferenced after the spinlock has
+ * been released, so buffers put into the list meanwhile stay in it.
+ *
+ * @param list Which list to purge.
+ */
+#if defined(CONFIG_NET_BUF_LOG)
+void net_buf_slist_purge_debug(sys_slist_t *list, const char *func, int line);
+#define net_buf_slist_purge(_list) net_buf_slist_purge_debug(_list, __func__, __LINE__)
+#else
+void net_buf_slist_purge(sys_slist_t *list);
+#endif
+
+/**
+ * @brief Unreference all buffers in a FIFO.
+ *
+ * Buffers are taken from the FIFO until it is empty, so buffers put into it
+ * meanwhile are unreferenced as well.
+ *
+ * @param fifo Which FIFO to purge.
+ */
+#if defined(CONFIG_NET_BUF_LOG)
+void net_buf_fifo_purge_debug(struct k_fifo *fifo, const char *func, int line);
+#define net_buf_fifo_purge(_fifo) net_buf_fifo_purge_debug(_fifo, __func__, __LINE__)
+#else
+void net_buf_fifo_purge(struct k_fifo *fifo);
+#endif
 
 /**
  * @brief Decrements the reference count of a buffer.
  *
  * The buffer is put back into the pool if the reference count reaches zero.
+ * A saturated reference count (see net_buf_ref()) is left as it is, and the
+ * buffer is not put back.
  *
  * @param buf A valid pointer on a buffer
  */
@@ -1691,6 +1742,9 @@ void net_buf_unref(struct net_buf *buf);
 /**
  * @brief Increment the reference count of a buffer.
  *
+ * The reference count tracks up to 254 references. At 255 it saturates: it
+ * no longer changes, and the buffer is never put back into its pool.
+ *
  * @param buf A valid pointer on a buffer
  *
  * @return the buffer newly referenced
@@ -1702,6 +1756,18 @@ struct net_buf * __must_check net_buf_ref(struct net_buf *buf);
  *
  * This performs an atomic exchange on @p orig. setting it to NULL and
  * returning the previous value.
+ *
+ * Use it where ownership of the reference moves, so that the previous owner
+ * is left without a pointer to a buffer it no longer owns:
+ *
+ * @code{.c}
+ * k_fifo_put(&tx_queue, net_buf_take(&buf));
+ * @endcode
+ *
+ * Passing `net_buf_take(&buf)` as an argument is only correct for calls that
+ * always take ownership. A function that takes ownership only on success
+ * leaves the buffer with the caller on error, so the caller needs its pointer
+ * until the function has returned.
  *
  * @param orig Pointer to the buffer pointer to transfer. Will be set to NULL
  *		on return.
@@ -1761,8 +1827,8 @@ static inline void * __must_check net_buf_user_data(const struct net_buf *buf)
 /**
  * @brief Copy user data from one to another buffer.
  *
- * @param dst A valid pointer to a buffer gettings its user data overwritten.
- * @param src A valid pointer to a buffer gettings its user data copied. User data size must be
+ * @param dst A valid pointer to a buffer getting its user data overwritten.
+ * @param src A valid pointer to a buffer getting its user data copied. User data size must be
  *            equal to or exceed @a dst.
  *
  * @return 0 on success or negative error number on failure.
@@ -2770,8 +2836,10 @@ void net_buf_frag_insert(struct net_buf *parent, struct net_buf *frag);
  *
  * Append a new fragment into the buffer fragments list.
  *
- * Note: This function takes ownership of the fragment reference so the
- * caller is not required to unref.
+ * Note: If @p head is not NULL, this function takes ownership of the
+ * fragment reference so the caller is not required to unref. If @p head is
+ * NULL, @p frag is returned with a new reference and the caller keeps its
+ * own.
  *
  * @param head Head of the fragment chain.
  * @param frag Fragment to add.
@@ -2846,15 +2914,17 @@ typedef struct net_buf * __must_check (*net_buf_allocator_cb)(k_timeout_t timeou
  * @param buf Network buffer.
  * @param len Total length of input data
  * @param value Data to be added
- * @param timeout Timeout is passed to the net_buf allocator callback.
+ * @param timeout Timeout for each allocation of a new fragment, not for the
+ *        call as a whole. It is passed to the net_buf allocator callback.
  * @param allocate_cb When a new net_buf is required, use this callback.
  * @param user_data A user data pointer to be supplied to the allocate_cb.
  *        This pointer is can be anything from a mem_pool or a net_pkt, the
  *        logic is left up to the allocate_cb function.
  *
- * @return Length of data actually added. This may be less than input
- *         length if other timeout than K_FOREVER was used, and there
- *         were no free fragments in a pool to accommodate all data.
+ * @return Length of data actually added. This is less than the input
+ *         length if a new fragment could not be allocated. That can also
+ *         happen with K_FOREVER, since some types of data allocators do not
+ *         wait (such as the HEAP type).
  */
 size_t net_buf_append_bytes(struct net_buf *buf, size_t len,
 			    const void *value, k_timeout_t timeout,
@@ -2882,20 +2952,25 @@ size_t net_buf_data_match(const struct net_buf *buf, size_t offset, const void *
  * @details Skip N number of bytes starting from fragment's offset. If the total
  * length of data is placed in multiple fragments, this function will skip from
  * all fragments until it reaches N number of bytes.  Any fully skipped buffers
- * are removed from the net_buf list.
+ * are removed from the net_buf list and unreferenced.
  *
  * @param buf Network buffer.
  * @param len Total length of data to be skipped.
  *
- * @return Pointer to the fragment or
- *         NULL and pos is 0 after successful skip,
- *         NULL and pos is 0xffff otherwise.
+ * @return The remaining fragment chain, or NULL if all data was skipped.
  */
 static inline struct net_buf *net_buf_skip(struct net_buf *buf, size_t len)
 {
-	while (buf && len--) {
-		net_buf_pull_u8(buf);
-		if (!buf->len) {
+	while (buf != NULL && len > 0U) {
+		size_t to_skip = MIN(len, buf->len);
+
+		/* A zero-capacity fragment has no data buffer to pull from */
+		if (to_skip > 0U) {
+			net_buf_pull(buf, to_skip);
+			len -= to_skip;
+		}
+
+		if (buf->len == 0U) {
 			buf = net_buf_frag_del(NULL, buf);
 		}
 	}

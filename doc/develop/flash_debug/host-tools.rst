@@ -12,6 +12,61 @@ hardware supports them and your Zephyr board directory's :file:`board.cmake`
 file declares that support properly. See :ref:`west-build-flash-debug` for
 more information on these commands.
 
+.. _runner_alif_flash:
+
+Alif Security Toolkit (SETOOLS)
+*******************************
+
+The Alif Security Toolkit (SETOOLS) programs the MRAM of Alif Ensemble devices
+through the Secure Enclave UART (SE-UART). The ``alif_flash`` runner wraps SETOOLS: it generates
+an Application Table of Contents (ATOC) package for the core the application was built for with
+``app-gen-toc``, then writes it to MRAM with ``app-write-mram``. The runner supports
+``west flash`` only. Boards that use it debug through another runner, such as
+:ref:`runner_jlink`.
+
+Setting up SETOOLS:
+
+#. Download the SETOOLS release for your host from the "Kits & Software" tab of your kit's
+   product page and unpack it. The `Alif Security Toolkit Quick Start Guide`_ describes the
+   release contents.
+
+#. Point the runner to the unpacked release:
+
+   .. code-block:: console
+
+      export ALIF_SE_TOOLS_DIR=$HOME/app-release-exec-linux
+
+   The ``--tools-dir`` runner argument overrides ``ALIF_SE_TOOLS_DIR``.
+
+#. Connect the board's SE-UART to the host, then let SETOOLS probe the device and select the
+   matching part number and baud rate:
+
+   .. code-block:: console
+
+      cd $ALIF_SE_TOOLS_DIR
+      ./tools-config -a
+
+   SETOOLS defaults to the Ensemble E8, so this step is required for every other part. The part
+   can also be selected manually with ``./tools-config -p "<Part#>"``. The runner checks the
+   configured part against the board's ``--device`` argument and refuses to flash on a mismatch.
+
+How the SE-UART is selected depends on the board, typically with a switch or jumpers; see the
+board's documentation.
+
+Flash with:
+
+.. code-block:: console
+
+   west flash --port=/dev/ttyACM0
+
+``--port`` selects the SE-UART and is stored in the SETOOLS ISP configuration; on Linux,
+a value without the ``/dev/`` prefix is expanded to ``/dev/tty<value>``, so ``USB0`` selects
+``/dev/ttyUSB0``. Options for ``app-write-mram`` are passed with
+``--tool-opt``, for example ``--tool-opt="-b 55000"`` to override the baud rate. Images for the
+Cortex-A32 APSS cores also need a BL32 image built with Alif's TF-A, passed with ``--bl32-bin``.
+
+Refer to the `Alif Security Toolkit User Guide`_ for details on the tools.
+
 .. _runner_blackmagicprobe:
 
 Black Magic Probe
@@ -118,17 +173,19 @@ A typical flash layout for devices without a ROM bootloader is:
 
 	&flash0 {
 		partitions {
-			compatible = "fixed-partitions";
 			#address-cells = <1>;
 			#size-cells = <1>;
+			ranges;
 
 			boot_partition: partition@0 {
+				compatible = "zephyr,mapped-partition";
 				label = "sam-ba";
 				reg = <0x00000000 0x2000>;
 				read-only;
 			};
 
 			code_partition: partition@2000 {
+				compatible = "zephyr,mapped-partition";
 				label = "code";
 				reg = <0x2000 0x3a000>;
 				read-only;
@@ -140,6 +197,7 @@ A typical flash layout for devices without a ROM bootloader is:
 			* if enabled.
 			*/
 			storage_partition: partition@3c000 {
+				compatible = "zephyr,mapped-partition";
 				label = "storage";
 				reg = <0x0003c000 0x00004000>;
 			};
@@ -159,11 +217,12 @@ partition is:
 
 	&flash0 {
 		partitions {
-			compatible = "fixed-partitions";
 			#address-cells = <1>;
 			#size-cells = <1>;
+			ranges;
 
 			code_partition: partition@0 {
+				compatible = "zephyr,mapped-partition";
 				label = "code";
 				reg = <0x0 0xF0000>;
 				read-only;
@@ -175,6 +234,7 @@ partition is:
 			* if enabled.
 			*/
 			storage_partition: partition@F0000 {
+				compatible = "zephyr,mapped-partition";
 				label = "storage";
 				reg = <0x000F0000 0x00100000>;
 			};
@@ -302,6 +362,16 @@ LinkServer west runner   ``--probe`` option to pass the probe index.
    you would like to single step from the start of their application, you
    will need to add a breakpoint at ``main`` or the reset handler manually.
 
+5. That breakpoint, and any other GDB command, can be installed automatically
+   with ``--gdb-init``, which this runner appends to the GDB client for
+   ``west debug`` and ``west attach``, e.g.:
+
+   .. code-block:: console
+
+      west debug --runner=linkserver --gdb-init 'b main'
+
+   See :ref:`gdb-init-runner-option`.
+
 .. _jlink-debug-host-tools:
 .. _runner_jlink:
 
@@ -332,6 +402,41 @@ drivers. RTT Viewer and SystemView can be downloaded separately, but are not
 required.
 
 Note that the J-Link GDB server does not yet support Zephyr RTOS-awareness.
+
+.. _gdb-init-runner-option:
+
+Passing Extra GDB Commands
+--------------------------
+
+The ``jlink`` runner accepts ``--gdb-init``, which appends a command to the GDB
+client started by ``west debug`` and ``west attach``. The option can be given
+multiple times and the commands run in the order given, last of everything the
+runner sends to GDB and before the target is resumed. Since they are only
+appended, they cannot change the runner's own connect, load and reset sequence.
+``west flash``, ``west reset``, ``west rtt`` and ``west debugserver`` are
+unaffected.
+
+For example, to enable J-Link semihosting for the duration of a debug session:
+
+.. code-block:: console
+
+   west debug -r jlink --gdb-init 'monitor semihosting enable' \
+     --gdb-init 'monitor semihosting basedir .'
+
+The same commands can be made the default for a board by adding them to its
+:file:`board.cmake`:
+
+.. code-block:: cmake
+
+   board_runner_args(jlink "--gdb-init=monitor semihosting enable")
+
+Note that ``--gdb-init`` only reaches the GDB client. Options for the J-Link GDB
+server itself are passed with ``--tool-opt``, and J-Link Commander commands run
+while flashing are passed with ``--pre-script-cmd``.
+
+The ``linkserver``, ``openocd`` and ``intel_cyclonev`` runners accept the same
+option. Which commands it applies to, and where the commands are inserted, is up
+to each runner.
 
 .. _openocd-debug-host-tools:
 .. _runner_openocd:
@@ -831,3 +936,9 @@ EWARM 10.10 or newer.
 
 .. _Realtek Supported Boards:
    https://docs.zephyrproject.org/latest/boards/realtek/index.html
+
+.. _Alif Security Toolkit Quick Start Guide:
+   https://alifsemi.com/download/AQSG0002
+
+.. _Alif Security Toolkit User Guide:
+   https://alifsemi.com/download/AUGD0005

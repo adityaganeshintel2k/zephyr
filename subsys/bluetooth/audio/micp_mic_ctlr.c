@@ -524,10 +524,15 @@ static void micp_mic_ctlr_reset(struct bt_micp_mic_ctlr *mic_ctlr)
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
-	struct bt_micp_mic_ctlr *mic_ctlr = mic_ctlr_get_by_conn(conn);
+	struct bt_micp_mic_ctlr *mic_ctlr;
 
 	ARG_UNUSED(reason);
 
+	if (!bt_conn_is_type(conn, BT_CONN_TYPE_LE)) {
+		return;
+	}
+
+	mic_ctlr = mic_ctlr_get_by_conn(conn);
 	if (mic_ctlr->conn == conn) {
 		micp_mic_ctlr_reset(mic_ctlr);
 	}
@@ -618,12 +623,11 @@ int bt_micp_mic_ctlr_discover(struct bt_conn *conn, struct bt_micp_mic_ctlr **mi
 	mic_ctlr->discover_params.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
 	mic_ctlr->discover_params.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
 
-	mic_ctlr->conn = ref;
+	mic_ctlr->conn = bt_conn_take(&ref);
 
 	err = bt_gatt_discover(conn, &mic_ctlr->discover_params);
 	if (err != 0) {
-		bt_conn_unref(ref);
-		mic_ctlr->conn = NULL;
+		bt_conn_drop(&mic_ctlr->conn);
 		goto cleanup;
 	}
 

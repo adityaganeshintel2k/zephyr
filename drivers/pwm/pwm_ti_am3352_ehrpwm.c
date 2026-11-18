@@ -29,10 +29,10 @@ LOG_MODULE_REGISTER(ti_ehrpwm);
 struct ti_ehrpwm_regs {
 	volatile uint16_t TBCTL;   /**< Time-Base Control Register, offset: 0x00 */
 	uint8_t RESERVED_1[0x8];   /**< Reserved, offset: 0x04 - 0x0A */
-	volatile uint16_t TBPRD;   /**< Time-Base Period Register, offest: 0x0A */
+	volatile uint16_t TBPRD;   /**< Time-Base Period Register, offset: 0x0A */
 	uint8_t RESERVED_2[0x6];   /**< Reserved, offset: 0x0E - 0x12 */
-	volatile uint16_t CMPA;    /**< Counter-Compare A Register, offest: 0x12 */
-	volatile uint16_t CMPB;    /**< Counter-Compare B Register, offest: 0x14 */
+	volatile uint16_t CMPA;    /**< Counter-Compare A Register, offset: 0x12 */
+	volatile uint16_t CMPB;    /**< Counter-Compare B Register, offset: 0x14 */
 	volatile uint16_t AQCTLA;  /**< AQ Control Register for Output A, offset: 0x16 */
 	volatile uint16_t AQCTLB;  /**< AQ Control Register for Output B, offset: 0x18 */
 	volatile uint16_t AQSFRC;  /**< AQ Software Force Register, offset: 0x1A */
@@ -412,8 +412,17 @@ static int ti_ehrpwm_get_cycles_per_sec(const struct device *dev, uint32_t chann
 {
 	ARG_UNUSED(channel);
 	const struct ti_ehrpwm_cfg *cfg = DEV_CFG(dev);
+	uint32_t rate;
+	int ret;
 
-	return clock_control_get_rate(cfg->clock_dev, cfg->clock_subsys, (uint32_t *)cycles);
+	ret = clock_control_get_rate(cfg->clock_dev, cfg->clock_subsys, &rate);
+	if (ret < 0) {
+		return ret;
+	}
+
+	*cycles = rate;
+
+	return 0;
 }
 
 #ifdef CONFIG_PWM_EVENT

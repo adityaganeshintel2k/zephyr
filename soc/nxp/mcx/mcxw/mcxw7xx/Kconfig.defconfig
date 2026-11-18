@@ -43,6 +43,20 @@ config SYS_CLOCK_HW_CYCLES_PER_SEC
 config MCUX_FLASH_K4_API
 	default y
 
+if BT_MESH_BLOB_IO_FLASH
+
+# MCXW7x internal flash is ECC-protected with a 16-byte phrase (write block)
+# that may only be programmed once per erase. Cache each BLOB block and flush
+# it phrase-aligned once so a BLE Mesh DFU with an unaligned chunk size does
+# not re-program a phrase and corrupt its ECC syndrome.
+config BT_MESH_BLOB_IO_FLASH_BLOCK_CACHE
+	default y
+
+config BT_MESH_BLOB_IO_FLASH_WRITE_BLOCK_SIZE_MAX
+	default 16
+
+endif # BT_MESH_BLOB_IO_FLASH
+
 if BT
 
 config MAIN_STACK_SIZE
@@ -91,7 +105,7 @@ config NXP_RF_IMU
 	default y
 
 config OPENTHREAD_SYS_INIT_PRIORITY
-	default 80 if OPENTHREAD_RADIO_VENDOR_IMPLEMENTATION && SOC_MCXW70AC
+	default 80 if OPENTHREAD_RADIO_VENDOR_IMPLEMENTATION
 
 endif # IEEE802154
 
@@ -105,4 +119,20 @@ endif # NXP_MCXW7XX_BOOT_HEADER
 endif
 
 config WUC
-	default y if "$(dt_nodelabel_enabled,wuu)"
+	default y if DT_HAS_NXP_WUC_WUU_ENABLED
+
+if SOC_MCXW70AC && PM
+
+# Not every peripheral keeps its registers in Deep Sleep on MCXW70: the devices
+# in deep_sleep_off_domain are turned off and back on around it.
+configdefault PM_DEVICE
+	default y
+
+configdefault POWER_DOMAIN
+	default y if PM_DEVICE
+
+# The devices are turned back on from the idle thread.
+configdefault IDLE_STACK_SIZE
+	default 640 if PM_DEVICE
+
+endif # SOC_MCXW70AC && PM

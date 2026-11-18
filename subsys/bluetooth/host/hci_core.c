@@ -45,7 +45,6 @@
 #include <zephyr/sys/__assert.h>
 #include <zephyr/sys/clock.h>
 #include <zephyr/toolchain.h>
-#include <soc.h>
 
 #include "addr_internal.h"
 #include "adv.h"
@@ -125,6 +124,20 @@ static K_WORK_DEFINE(rx_work, rx_work_handler);
 static struct k_work_q bt_workq;
 static K_KERNEL_STACK_DEFINE(rx_thread_stack, CONFIG_BT_RX_STACK_SIZE);
 
+/* The Host relies on the cooperative priority of its threads for mutual
+ * exclusion, which K_PRIO_COOP() gives only below CONFIG_NUM_COOP_PRIORITIES.
+ * This check and the one in conn.c go away once the Host no longer relies
+ * on cooperative scheduling, see
+ * https://github.com/zephyrproject-rtos/zephyr/issues/116316
+ */
+BUILD_ASSERT(CONFIG_BT_RX_PRIO < CONFIG_NUM_COOP_PRIORITIES,
+	     "The Bluetooth RX workqueue needs a cooperative priority");
+
+bool bt_is_work_thread(void)
+{
+	return k_current_get() == bt_workq.thread_id;
+}
+
 int bt_work_submit(struct k_work *work)
 {
 	return k_work_submit_to_queue(&bt_workq, work);
@@ -169,6 +182,25 @@ struct bt_dev bt_dev = {
 	.hci = BT_HCI_DEV,
 	.lock = Z_MUTEX_INITIALIZER(bt_dev.lock),
 };
+
+void bt_dev_lock(void)
+{
+	__maybe_unused int err = k_mutex_lock(&bt_dev.lock, K_FOREVER);
+
+	__ASSERT(err == 0, "failed to lock the host lock (err %d)", err);
+}
+
+void bt_dev_unlock(void)
+{
+	__maybe_unused int err;
+
+	/* k_mutex_unlock() skips its owner check with CONFIG_NO_RUNTIME_CHECKS */
+	BT_DEV_LOCK_ASSERT();
+
+	err = k_mutex_unlock(&bt_dev.lock);
+
+	__ASSERT(err == 0, "failed to unlock the host lock (err %d)", err);
+}
 
 static bt_ready_cb_t ready_cb;
 
@@ -342,7 +374,12 @@ void bt_hci_host_num_completed_packets(struct net_buf *buf)
 	net_buf_destroy(buf);
 
 	/* Do nothing if controller to host flow control is not supported */
-	if (drv_quirk_no_flow_control() || !BT_CMD_TEST(bt_dev.supported_commands, 10, 5)) {
+	if (drv_quirk_no_flow_control() || !bt_dev_cmd_supported(BT_DEV_CMD_SET_CTL_TO_HOST_FLOW)) {
+		return;
+	}
+
+	/* Dropped before its connection was looked up */
+	if (index == BT_CONN_INDEX_INVALID) {
 		return;
 	}
 
@@ -426,6 +463,29 @@ static void hci_cmd_queue_purge(void)
 	}
 }
 
+/* Complete the command that was on its way to the controller when the HCI
+ * transport was closed. Its response cannot arrive any more, and its sender
+ * would otherwise wait for the command timeout.
+ */
+static void hci_cmd_sent_purge(void)
+{
+	struct net_buf *buf;
+
+	buf = net_buf_take(&bt_dev.sent_cmd);
+	if (buf == NULL) {
+		return;
+	}
+
+	LOG_WRN("Dropping sent command 0x%04x: HCI transport closed", cmd(buf)->opcode);
+
+	if (cmd(buf)->sync != NULL) {
+		cmd(buf)->status = BT_HCI_ERR_UNSPECIFIED;
+		k_sem_give(cmd(buf)->sync);
+	}
+
+	net_buf_unref(buf);
+}
+
 int bt_hci_cmd_send(uint16_t opcode, struct net_buf *buf)
 {
 	int err;
@@ -493,6 +553,59 @@ int bt_hci_cmd_send(uint16_t opcode, struct net_buf *buf)
 }
 
 static bool process_pending_cmd(k_timeout_t timeout);
+
+/* A command timed out while Bluetooth is being enabled, and the Controller
+ * has not sent anything since the transport was opened: it is missing,
+ * unpowered or does not run HCI. Nothing in the Host depends on the
+ * Controller yet, so close the transport, as bt_disable() does, which stops
+ * any late response from completing the command. The caller can then fail
+ * instead of asserting.
+ *
+ * Return true if the transport is closed.
+ */
+static bool close_silent_transport(void)
+{
+	if (!atomic_test_bit(bt_dev.flags, BT_DEV_ENABLING) ||
+	    !atomic_test_bit(bt_dev.flags, BT_DEV_OPEN) ||
+	    atomic_test_bit(bt_dev.flags, BT_DEV_CTLR_RX)) {
+		return false;
+	}
+
+	/* The TX processor holds the host lock while the driver is in send(),
+	 * which can outlast the command timeout, and the transport must not be
+	 * closed during a send. Holding the lock also keeps a new send from
+	 * starting before the close.
+	 */
+	if (k_mutex_lock(&bt_dev.lock, K_NO_WAIT) != 0) {
+		return false;
+	}
+
+	atomic_clear_bit(bt_dev.flags, BT_DEV_OPEN);
+	hci_cmd_queue_purge();
+
+	if (bt_hci_close(bt_dev.hci) != 0) {
+		atomic_set_bit(bt_dev.flags, BT_DEV_OPEN);
+		bt_dev_unlock();
+		return false;
+	}
+
+	bt_dev_unlock();
+
+	/* A packet that came in before the close shows that the Controller
+	 * responds, so the timeout is not the case handled here. Otherwise
+	 * nothing has reached bt_recv(), so unlike in bt_disable() there is
+	 * nothing on the RX queue to drop.
+	 */
+	if (atomic_test_bit(bt_dev.flags, BT_DEV_CTLR_RX)) {
+		return false;
+	}
+
+	net_buf_drop(&bt_dev.sent_cmd);
+	bt_monitor_send(BT_MONITOR_CLOSE_INDEX, NULL, 0);
+
+	return true;
+}
+
 int bt_hci_cmd_send_sync(uint16_t opcode, struct net_buf *buf,
 			 struct net_buf **rsp)
 {
@@ -569,6 +682,12 @@ int bt_hci_cmd_send_sync(uint16_t opcode, struct net_buf *buf,
 
 	/* Now that we have sent the command, suspend until the LL replies */
 	err = k_sem_take(&sync_sem, HCI_CMD_TIMEOUT);
+	if (err != 0 && close_silent_transport()) {
+		LOG_ERR("No response from the Controller, command opcode 0x%04x timeout", opcode);
+		net_buf_unref(buf);
+		return -ETIMEDOUT;
+	}
+
 	BT_ASSERT_MSG(err == 0,
 		      "Controller unresponsive, command opcode 0x%04x timeout with err %d",
 		      opcode, err);
@@ -612,7 +731,7 @@ int bt_hci_le_rand(void *buffer, size_t len)
 	int err;
 
 	/* Check first that HCI_LE_Rand is supported */
-	if (!BT_CMD_TEST(bt_dev.supported_commands, 27, 7)) {
+	if (!bt_dev_cmd_supported(BT_DEV_CMD_LE_RAND)) {
 		return -ENOTSUP;
 	}
 
@@ -1451,6 +1570,9 @@ static void le_conn_complete_adv_timeout(void)
 		bt_conn_set_state(conn, BT_CONN_DISCONNECTED);
 
 		bt_conn_unref(conn);
+	} else if (bt_drv_quirk_no_adv_term_on_dir_timeout()) {
+		/* No LE Advertising Set Terminated event follows to end the advertising set */
+		bt_le_adv_high_duty_timeout();
 	}
 }
 
@@ -1531,9 +1653,11 @@ void bt_hci_le_enh_conn_complete(struct bt_hci_evt_le_enh_conn_complete *evt,
 	struct bt_conn *conn;
 	uint8_t id;
 
-	LOG_DBG("status 0x%02x %s handle %u role %u peer %s peer RPA %s",
+	LOG_DBG("status 0x%02x %s handle %u role %u peer %s%s peer RPA %s",
 		evt->status, bt_hci_err_to_str(evt->status), handle,
-		evt->role, bt_addr_le_str(&evt->peer_addr), bt_addr_str(&evt->peer_rpa));
+		evt->role, bt_addr_le_str(&evt->peer_addr),
+		bt_addr_le_is_resolved(&evt->peer_addr) ? " (resolved)" : "",
+		bt_addr_str(&evt->peer_rpa));
 	LOG_DBG("local RPA %s", bt_addr_str(&evt->local_rpa));
 
 #if defined(CONFIG_BT_SMP)
@@ -1557,7 +1681,8 @@ void bt_hci_le_enh_conn_complete(struct bt_hci_evt_le_enh_conn_complete *evt,
 	}
 
 	if (!conn) {
-		LOG_ERR("No pending conn for peer %s", bt_addr_le_str(&evt->peer_addr));
+		LOG_ERR("No pending conn for peer %s%s", bt_addr_le_str(&evt->peer_addr),
+			bt_addr_le_is_resolved(&evt->peer_addr) ? " (resolved)" : "");
 		bt_hci_disconnect(handle, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 		return;
 	}
@@ -1697,9 +1822,11 @@ void bt_hci_le_enh_conn_complete_sync(struct bt_hci_evt_le_enh_conn_complete_v2 
 		return;
 	}
 
-	LOG_DBG("status 0x%02x %s handle %u role %u peer %s peer RPA %s",
+	LOG_DBG("status 0x%02x %s handle %u role %u peer %s%s peer RPA %s",
 		evt->status, bt_hci_err_to_str(evt->status), handle,
-		evt->role, bt_addr_le_str(&evt->peer_addr), bt_addr_str(&evt->peer_rpa));
+		evt->role, bt_addr_le_str(&evt->peer_addr),
+		bt_addr_le_is_resolved(&evt->peer_addr) ? " (resolved)" : "",
+		bt_addr_str(&evt->peer_rpa));
 	LOG_DBG("local RPA %s", bt_addr_str(&evt->local_rpa));
 
 	if (evt->role != BT_HCI_ROLE_PERIPHERAL) {
@@ -2246,7 +2373,7 @@ static int set_flow_control(void)
 	}
 
 	/* Check if host flow control is actually supported */
-	if (!BT_CMD_TEST(bt_dev.supported_commands, 10, 5)) {
+	if (!bt_dev_cmd_supported(BT_DEV_CMD_SET_CTL_TO_HOST_FLOW)) {
 		LOG_WRN("Controller to host flow control not supported");
 		return 0;
 	}
@@ -2280,6 +2407,7 @@ static void unpair(uint8_t id, const bt_addr_le_t *addr)
 {
 	struct bt_keys *keys = NULL;
 	struct bt_conn *conn = bt_conn_lookup_addr_le(id, addr);
+	bool was_bonded = false;
 
 	if (conn) {
 		/* Clear the conn->le.keys pointer since we'll invalidate it,
@@ -2301,22 +2429,27 @@ static void unpair(uint8_t id, const bt_addr_le_t *addr)
 		}
 
 		if (keys) {
+			/* A bond existed if any keys were present. */
+			if (keys->keys != 0) {
+				was_bonded = true;
+			}
+
 			bt_keys_clear(keys);
 		}
 	}
 
 	bt_gatt_clear(id, addr);
 
-#if defined(CONFIG_BT_SMP) || defined(CONFIG_BT_CLASSIC)
-	struct bt_conn_auth_info_cb *listener, *next;
+	if (IS_ENABLED(CONFIG_BT_SMP) && was_bonded) {
+		struct bt_conn_auth_info_cb *listener, *next;
 
-	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&bt_auth_info_cbs, listener,
-					  next, node) {
-		if (listener->bond_deleted) {
-			listener->bond_deleted(id, addr);
+		SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&bt_auth_info_cbs, listener,
+						  next, node) {
+			if (listener->bond_deleted) {
+				listener->bond_deleted(id, addr);
+			}
 		}
 	}
-#endif /* defined(CONFIG_BT_SMP) || defined(CONFIG_BT_CLASSIC) */
 }
 
 static void unpair_remote(const struct bt_bond_info *info, void *data)
@@ -2706,7 +2839,18 @@ static void hci_cmd_done(uint16_t opcode, uint8_t status, struct net_buf *evt_bu
 	 */
 	if (evt_buf != buf) {
 		net_buf_reset(buf);
-		net_buf_add_mem(buf, evt_buf->data, evt_buf->len);
+
+		if (evt_buf->len > net_buf_tailroom(buf)) {
+			/* The command buffer holds a response of the size that
+			 * CONFIG_BT_BUF_EVT_RX_SIZE allows. A longer one cannot
+			 * be handed over, so the command fails.
+			 */
+			LOG_ERR("Response to opcode 0x%04x too long (%u bytes)", opcode,
+				evt_buf->len);
+			status = BT_HCI_ERR_UNSPECIFIED;
+		} else {
+			net_buf_add_mem(buf, evt_buf->data, evt_buf->len);
+		}
 	}
 
 	if (cmd(buf)->state && !status) {
@@ -3489,7 +3633,7 @@ static int read_le_local_supported_features(void)
 
 	/* Read Low Energy Supported Features */
 	if (IS_ENABLED(CONFIG_BT_LE_EXTENDED_FEAT_SET) &&
-	    BT_READ_ALL_LOCAL_FEATURES_SUPPORTED(bt_dev.supported_commands)) {
+	    bt_dev_cmd_supported(BT_DEV_CMD_LE_READ_ALL_LOCAL_SUPPORTED_FEATURES)) {
 		err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_ALL_LOCAL_SUPPORTED_FEATURES, NULL,
 					   &rsp);
 		if (err != 0) {
@@ -3616,10 +3760,30 @@ static int le_set_host_feature(uint8_t bit_number, uint8_t bit_value)
 static void read_supported_commands_complete(struct net_buf *buf)
 {
 	struct bt_hci_rp_read_supported_commands *rp = (void *)buf->data;
+	const uint8_t *cmds = rp->commands;
 
 	LOG_DBG("status 0x%02x %s", rp->status, bt_hci_err_to_str(rp->status));
 
-	memcpy(bt_dev.supported_commands, rp->commands, sizeof(bt_dev.supported_commands));
+	atomic_set_bit_to(bt_dev.supported_commands, BT_DEV_CMD_WRITE_CONN_ACCEPT_TIMEOUT,
+			  BT_CMD_TEST(cmds, 7, 3) != 0U);
+	atomic_set_bit_to(bt_dev.supported_commands, BT_DEV_CMD_SET_CTL_TO_HOST_FLOW,
+			  BT_CMD_TEST(cmds, 10, 5) != 0U);
+	atomic_set_bit_to(bt_dev.supported_commands, BT_DEV_CMD_LE_SET_HOST_CHAN_CLASSIF,
+			  BT_CMD_TEST(cmds, 27, 3) != 0U);
+	atomic_set_bit_to(bt_dev.supported_commands, BT_DEV_CMD_LE_RAND,
+			  BT_CMD_TEST(cmds, 27, 7) != 0U);
+	atomic_set_bit_to(bt_dev.supported_commands, BT_DEV_CMD_LE_READ_SUPP_STATES,
+			  BT_CMD_LE_STATES(cmds) != 0U);
+	atomic_set_bit_to(bt_dev.supported_commands, BT_DEV_CMD_LE_SET_PRIVACY_MODE,
+			  BT_CMD_TEST(cmds, 39, 2) != 0U);
+	atomic_set_bit_to(bt_dev.supported_commands, BT_DEV_CMD_LE_READ_BUFFER_SIZE_V2,
+			  BT_CMD_TEST(cmds, 41, 5) != 0U);
+	atomic_set_bit_to(bt_dev.supported_commands,
+			  BT_DEV_CMD_LE_READ_ALL_LOCAL_SUPPORTED_FEATURES,
+			  BT_READ_ALL_LOCAL_FEATURES_SUPPORTED(cmds) != 0U);
+	atomic_set_bit_to(bt_dev.supported_commands,
+			  BT_DEV_CMD_LE_CS_READ_LOCAL_SUPPORTED_CAPABILITIES_V2,
+			  BT_LE_CS_READ_LOCAL_SUPPORTED_CAPABILITIES_V2_SUPPORTED(cmds) != 0U);
 }
 
 static void read_local_features_complete(struct net_buf *buf)
@@ -3661,6 +3825,29 @@ static void le_read_resolving_list_size_complete(struct net_buf *buf)
 	bt_dev.le.rl_size = rp->rl_size;
 }
 #endif /* defined(CONFIG_BT_SMP) */
+
+__maybe_unused static int set_conn_accept_timeout(uint16_t timeout)
+{
+	struct bt_hci_cp_write_conn_accept_timeout *cp;
+	struct net_buf *buf;
+
+	/* Leave the controller default in place when it does not claim the
+	 * command.
+	 */
+	if (!bt_dev_cmd_supported(BT_DEV_CMD_WRITE_CONN_ACCEPT_TIMEOUT)) {
+		return 0;
+	}
+
+	buf = bt_hci_cmd_alloc(K_FOREVER);
+	if (buf == NULL) {
+		return -ENOBUFS;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->conn_accept_timeout = sys_cpu_to_le16(timeout);
+
+	return bt_hci_cmd_send_sync(BT_HCI_OP_WRITE_CONN_ACCEPT_TIMEOUT, buf, NULL);
+}
 
 static int common_init(void)
 {
@@ -3717,6 +3904,13 @@ static int common_init(void)
 		return err;
 	}
 #endif /* CONFIG_BT_HCI_ACL_FLOW_CONTROL */
+
+#if defined(CONFIG_BT_CONN_ACCEPT_TIMEOUT)
+	err = set_conn_accept_timeout(CONFIG_BT_CONN_ACCEPT_TIMEOUT);
+	if (err != 0) {
+		return err;
+	}
+#endif /* CONFIG_BT_CONN_ACCEPT_TIMEOUT */
 
 	return 0;
 }
@@ -3886,8 +4080,7 @@ static int le_set_event_mask(void)
 		/* Only set v2 event mask if controller supports it; v1-only CS controllers
 		 * may reject the Set Event Mask command if an unknown bit is set.
 		 */
-		if (BT_LE_CS_READ_LOCAL_SUPPORTED_CAPABILITIES_V2_SUPPORTED(
-				bt_dev.supported_commands)) {
+		if (bt_dev_cmd_supported(BT_DEV_CMD_LE_CS_READ_LOCAL_SUPPORTED_CAPABILITIES_V2)) {
 			mask |= BT_EVT_MASK_LE_CS_READ_REMOTE_SUPPORTED_CAPABILITIES_COMPLETE_V2;
 		}
 		mask |= BT_EVT_MASK_LE_CS_READ_REMOTE_FAE_TABLE_COMPLETE;
@@ -3916,8 +4109,7 @@ static int le_init_iso(void)
 		}
 	}
 
-	/* Octet 41, bit 5 is read buffer size V2 */
-	if (BT_CMD_TEST(bt_dev.supported_commands, 41, 5)) {
+	if (bt_dev_cmd_supported(BT_DEV_CMD_LE_READ_BUFFER_SIZE_V2)) {
 		/* Read ISO Buffer Size V2 */
 		err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_BUFFER_SIZE_V2,
 					   NULL, &rsp);
@@ -4025,7 +4217,7 @@ static int le_init(void)
 	}
 
 	/* Read LE Supported States */
-	if (BT_CMD_LE_STATES(bt_dev.supported_commands)) {
+	if (bt_dev_cmd_supported(BT_DEV_CMD_LE_READ_SUPP_STATES)) {
 		err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_SUPP_STATES, NULL,
 					   &rsp);
 		if (err) {
@@ -4535,7 +4727,7 @@ static void le_conn_complete_prio(uint8_t role)
 		 * object to keep host in sync with controller state.
 		 */
 		atomic_clear_bit(adv->flags, BT_ADV_ENABLED);
-		(void)bt_le_lim_adv_cancel_timeout(adv);
+		bt_le_lim_adv_cancel_timeout(adv);
 	}
 }
 
@@ -4631,8 +4823,8 @@ static void hci_event_prio(struct net_buf *buf)
 }
 
 /* Whether bt_disable() is tearing down low-priority RX processing, meaning
- * that RX packets must no longer be queued or dispatched. Not true in the
- * failed-disable recovery states, where BT_DEV_READY gets restored.
+ * that RX packets must no longer be queued or dispatched. Not true after a
+ * failed disable, which clears BT_DEV_DISABLING again.
  */
 static bool rx_teardown_active(void)
 {
@@ -4647,7 +4839,7 @@ static void rx_queue_put(struct net_buf *buf)
 		return;
 	}
 
-	net_buf_slist_put(&bt_dev.rx_queue, buf);
+	net_buf_slist_put(&bt_dev.rx_queue, net_buf_take(&buf));
 
 	const int err = bt_work_submit(&rx_work);
 
@@ -4725,6 +4917,10 @@ static int bt_recv(const struct device *dev, struct net_buf *buf)
 {
 	ARG_UNUSED(dev);
 	int err;
+
+	if (atomic_test_bit(bt_dev.flags, BT_DEV_ENABLING)) {
+		atomic_set_bit(bt_dev.flags, BT_DEV_CTLR_RX);
+	}
 
 	k_sched_lock();
 	err = bt_recv_unsafe(buf);
@@ -4939,6 +5135,22 @@ int bt_enable(bt_ready_cb_t cb)
 	}
 	k_fifo_init(&bt_dev.cmd_tx_queue);
 
+	if (IS_ENABLED(CONFIG_BT_HCI_SET_PUBLIC_ADDR)) {
+		/* Set on every enable, and cleared when there is no public
+		 * identity, so that an address an earlier enable left behind is
+		 * not applied to the controller by this one.
+		 */
+		if (bt_dev.id_count > 0 &&
+		    bt_dev.id_addr[BT_ID_DEFAULT].type == BT_ADDR_LE_PUBLIC) {
+			bt_hci_set_public_addr(bt_dev.hci, &bt_dev.id_addr[BT_ID_DEFAULT].a);
+		} else {
+			bt_hci_set_public_addr(bt_dev.hci, BT_ADDR_ANY);
+		}
+	}
+
+	/* Cleared before the open, as the Controller may send right after it. */
+	atomic_clear_bit(bt_dev.flags, BT_DEV_CTLR_RX);
+
 	err = bt_hci_open(bt_dev.hci, bt_recv);
 	if (err) {
 		LOG_ERR("HCI driver open failed (%d)", err);
@@ -4963,7 +5175,6 @@ failed:
 
 int bt_disable(void)
 {
-	struct net_buf *buf;
 	bool was_ready;
 	int err;
 
@@ -4981,11 +5192,26 @@ int bt_disable(void)
 		return -EALREADY;
 	}
 
+	/* A driver without a close() op cannot be disabled. Find that out
+	 * before anything is torn down, none of which can be undone.
+	 */
+	if (!bt_hci_can_close(bt_dev.hci)) {
+		atomic_clear_bit(bt_dev.flags, BT_DEV_DISABLING);
+		return -ENOSYS;
+	}
+
 	/* Clear BT_DEV_READY before disabling HCI link. It is not set if
 	 * bt_enable() failed after opening the transport, in which case a
 	 * failed disable must not set it either.
+	 *
+	 * The TX processor holds the host lock for a whole pass, so with the
+	 * lock held here no pass is under way in another thread when the
+	 * flag changes: what a pass has picked up has been sent, and every
+	 * later one holds back what is queued for the connections.
 	 */
+	bt_dev_lock();
 	was_ready = atomic_test_and_clear_bit(bt_dev.flags, BT_DEV_READY);
+	bt_dev_unlock();
 
 #if defined(CONFIG_BT_BROADCASTER)
 	bt_adv_reset_adv_pool();
@@ -5008,13 +5234,9 @@ int bt_disable(void)
 	 * them. The workqueue itself is kept running, since delayable host
 	 * work may remain scheduled across an enable/disable cycle.
 	 */
-	buf = net_buf_slist_get(&bt_dev.rx_queue);
-	while (buf != NULL) {
-		net_buf_unref(buf);
-		buf = net_buf_slist_get(&bt_dev.rx_queue);
-	}
+	net_buf_slist_purge(&bt_dev.rx_queue);
 
-	if (k_current_get() == bt_workq.thread_id) {
+	if (bt_is_work_thread()) {
 		(void)k_work_cancel(&rx_work);
 	} else {
 		struct k_work_sync sync;
@@ -5030,6 +5252,8 @@ int bt_disable(void)
 			LOG_ERR("Failed to reset BLE controller");
 			if (was_ready) {
 				atomic_set_bit(bt_dev.flags, BT_DEV_READY);
+				/* Resume sending the data that was held back */
+				bt_tx_irq_raise();
 			}
 			atomic_clear_bit(bt_dev.flags, BT_DEV_DISABLING);
 			return err;
@@ -5065,17 +5289,23 @@ int bt_disable(void)
 
 	err = bt_hci_close(bt_dev.hci);
 	if (err) {
-		/* Re-enable state bits to avoid inconsistent stack state */
+		/* The transport is still open, but what has been torn down
+		 * cannot be brought back: the connections are gone, and the
+		 * controller has been reset unless the driver has the
+		 * no-reset quirk. So the stack is left not ready, where all
+		 * that can be done is to try the disable again.
+		 */
 		atomic_set_bit(bt_dev.flags, BT_DEV_OPEN);
-		if (was_ready) {
-			atomic_set_bit(bt_dev.flags, BT_DEV_READY);
-		}
 		atomic_clear_bit(bt_dev.flags, BT_DEV_DISABLING);
 		return err;
 	}
 
+	hci_cmd_sent_purge();
+
 	/* Some functions rely on checking this bitfield */
-	memset(bt_dev.supported_commands, 0x00, sizeof(bt_dev.supported_commands));
+	ARRAY_FOR_EACH(bt_dev.supported_commands, i) {
+		atomic_clear(&bt_dev.supported_commands[i]);
+	}
 
 	if (IS_ENABLED(CONFIG_BT_SETTINGS)) {
 		bt_settings_flush();
@@ -5303,7 +5533,7 @@ int bt_le_set_chan_map(uint8_t chan_map[5])
 		return -ENOTSUP;
 	}
 
-	if (!BT_CMD_TEST(bt_dev.supported_commands, 27, 3)) {
+	if (!bt_dev_cmd_supported(BT_DEV_CMD_LE_SET_HOST_CHAN_CLASSIF)) {
 		LOG_WRN("Set Host Channel Classification command is "
 			"not supported");
 		return -ENOTSUP;

@@ -9,6 +9,13 @@
  * xSPI flash controller driver for stm32 series with xSPI periherals
  * This driver is based on the stm32Cube HAL XSPI driver
  * with one xspi DTS NODE
+ *
+ *
+ * WARNING :
+ *  This driver will be deprecated in favor of its MSPI alternative
+ *  following v4.5.0
+ *
+ *
  * **************************************************************************
  *
  * CRITICAL CONSTRAINT: Avoid Flash Access in XIP Critical Path
@@ -38,10 +45,6 @@
  * during code execution from RAM in the critical path.
  */
 #define DT_DRV_COMPAT st_stm32_xspi_nor
-
-#if defined(CONFIG_SOC_SERIES_STM32H5X)
-#warning "This driver will be deprecated in favor of its MSPI alternative following v4.5.0"
-#endif /* CONFIG_SOC_SERIES_STM32H5X */
 
 #include <errno.h>
 #include <zephyr/kernel.h>
@@ -2309,6 +2312,9 @@ static int flash_stm32_xspi_init(const struct device *dev)
 				return -ENODEV;
 			}
 #endif
+			/* Set timeout value */
+			HAL_XSPI_SetTimeout(&dev_data->hxspi, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+
 			/* Force HAL instance in correct state */
 			dev_data->hxspi.State = HAL_XSPI_STATE_BUSY_MEM_MAPPED;
 
@@ -2703,10 +2709,10 @@ static int flash_stm32_xspi_init(const struct device *dev)
 												\
 	static const struct flash_stm32_xspi_config flash_stm32_xspi_cfg_##inst = {		\
 		/* Properties of the controller */						\
-		.pclken = STM32_CLOCK_INFO_BY_NAME(STM32_XSPI_NODE(inst), xspix),		\
+		.pclken = STM32_DT_CLOCK_INFO_BY_NAME(STM32_XSPI_NODE(inst), xspix),		\
 		IF_ENABLED(DT_CLOCKS_HAS_NAME(STM32_XSPI_NODE(inst), xspi_ker),	(		\
 			.has_pclken_ker = true,							\
-			.pclken_ker = STM32_CLOCK_INFO_BY_NAME(STM32_XSPI_NODE(inst), xspi_ker),\
+			.pclken_ker = STM32_DT_CLOCK_INFO_BY_NAME(STM32_XSPI_NODE(inst), xspi_ker),\
 		))										\
 		.pcfg = PINCTRL_DT_DEV_CONFIG_GET(STM32_XSPI_NODE(inst)),			\
 		.irq_config = flash_stm32_xspi_irq_config_func_##inst,				\

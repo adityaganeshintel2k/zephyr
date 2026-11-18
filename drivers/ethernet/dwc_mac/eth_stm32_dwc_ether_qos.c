@@ -31,22 +31,63 @@ LOG_MODULE_REGISTER(dwmac_plat, CONFIG_ETHERNET_LOG_LEVEL);
 #include "eth_dwmac_priv.h"
 #include "eth_stm32_dwc.h"
 
-#if defined(CONFIG_SOC_SERIES_STM32N6X)
-/* The DMA bus master interface is a 64-bit AXI4 interface on this IP */
-#define DATA_BUS_WIDTH 64
+/*
+ * The DMA bus master interface of this IP is a
+ * - 64-bit AXI4 interface on STM32N6 series
+ * - 32-bit AXI4 interface on STM32MP13 series
+ * - 32-bit AHB interface on other series
+ */
 
+#if defined(CONFIG_SOC_SERIES_STM32MP13X) || defined(CONFIG_SOC_SERIES_STM32N6X)
+#define DMA_HAS_AXI4_BUS 1
+#endif
+
+#if defined(CONFIG_SOC_SERIES_STM32N6X)
+#define DATA_BUS_WIDTH 64
+#else
+#define DATA_BUS_WIDTH 32
+#endif
+
+#if defined(DMA_HAS_AXI4_BUS)
 #define ETH_STM32_DMA_SYSBUS_MODE                                                                  \
 	(DMA_SYSBUS_MODE_AAL | DMA_SYSBUS_MODE_FB |                                                \
 	 DMA_SYSBUS_MODE_BLEN16 | DMA_SYSBUS_MODE_BLEN8 | DMA_SYSBUS_MODE_BLEN4 |                  \
 	 FIELD_PREP(DMA_SYSBUS_MODE_RD_OSR_LMT, 3) | FIELD_PREP(DMA_SYSBUS_MODE_WR_OSR_LMT, 3))
 #else
-/* The DMA bus master interface is a 32-bit AHB interface on this IP */
-#define DATA_BUS_WIDTH 32
-
 #define ETH_STM32_DMA_SYSBUS_MODE (DMA_SYSBUS_MODE_AAL | DMA_SYSBUS_MODE_FB)
 #endif
 
 DWMAC_ASSERT_BUFFER_ALIGNMENT(DATA_BUS_WIDTH);
+
+/* MMC counters present in the controller of every series */
+#define ETH_STM32_MMC_COUNTERS_BASE(X)                                                             \
+	X(TX_SINGLE_COLLISION_GOOD_PACKETS)                                                        \
+	X(TX_MULTIPLE_COLLISION_GOOD_PACKETS)                                                      \
+	X(TX_PACKET_COUNT_GOOD)                                                                    \
+	X(RX_CRC_ERROR_PACKETS)                                                                    \
+	X(RX_ALIGNMENT_ERROR_PACKETS)                                                              \
+	X(RX_UNICAST_PACKETS_GOOD)                                                                 \
+	X(TX_LPI_USEC_CNTR)                                                                        \
+	X(TX_LPI_TRAN_CNTR)                                                                        \
+	X(RX_LPI_USEC_CNTR)                                                                        \
+	X(RX_LPI_TRAN_CNTR)
+
+/* Frame preemption counters */
+#define ETH_STM32_MMC_COUNTERS_FPE(X)                                                              \
+	X(TX_FPE_FRAGMENT_CNTR)                                                                    \
+	X(TX_HOLD_REQ_CNTR)                                                                        \
+	X(RX_PACKET_ASSEMBLY_ERR_CNTR)                                                             \
+	X(RX_PACKET_SMD_ERR_CNTR)                                                                  \
+	X(RX_PACKET_ASSEMBLY_OK_CNTR)                                                              \
+	X(RX_FPE_FRAGMENT_CNTR)
+
+#if defined(CONFIG_SOC_SERIES_STM32C5X) || defined(CONFIG_SOC_SERIES_STM32H5X) ||                  \
+	defined(CONFIG_SOC_SERIES_STM32H7X) || defined(CONFIG_SOC_SERIES_STM32H7RSX) ||            \
+	defined(CONFIG_SOC_SERIES_STM32MP13X)
+#define ETH_STM32_MMC_COUNTERS(X) ETH_STM32_MMC_COUNTERS_BASE(X)
+#elif defined(CONFIG_SOC_SERIES_STM32N6X)
+#define ETH_STM32_MMC_COUNTERS(X) ETH_STM32_MMC_COUNTERS_BASE(X) ETH_STM32_MMC_COUNTERS_FPE(X)
+#endif
 
 struct eth_stm32_dwc_config {
 	/* Has to come first, as the core only knows about this part */
@@ -316,6 +357,7 @@ int dwmac_platform_init(const struct device *dev)
 			.clock = DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE),                          \
 			.mac_clk = ETH_STM32_PCLKEN_SUBSYS(n, ETH_STM32_MAC_CLK_IDX(n)),           \
 			IF_ENABLED(CONFIG_PTP_CLOCK_DWC_MAC, (ETH_STM32_DWMAC_PTP_CONFIG(n)))      \
+			DWMAC_MMC_CONFIG_INIT(eth##n##_mmc)                                        \
 	}
 
 #define ETH_STM32_DWC_DEVICE(n)                                                                    \
@@ -328,6 +370,8 @@ int dwmac_platform_init(const struct device *dev)
 	/* Descriptor rings in uncached memory */                                                  \
 	static struct dwmac_dma_desc eth##n##_tx_descs[NB_TX_DESCS] __desc_mem;                    \
 	static struct dwmac_dma_desc eth##n##_rx_descs[NB_RX_DESCS] __desc_mem;                    \
+                                                                                                   \
+	DWMAC_MMC_COUNTERS_DEFINE(eth##n##_mmc, ETH_STM32_MMC_COUNTERS);                           \
                                                                                                    \
 	static void eth##n##_select_phy_interface(void)                                            \
 	{                                                                                          \

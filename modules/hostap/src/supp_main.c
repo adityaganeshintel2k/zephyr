@@ -417,6 +417,23 @@ static int supplicant_register_iface_type(struct net_if *iface)
 	return 0;
 }
 
+static int wpa_supplicant_set_default_dev_name(struct wpa_supplicant *wpa_s)
+{
+#ifdef CONFIG_WIFI_NM_WPA_SUPPLICANT_P2P
+	if (strlen(WIFI_P2P_DEVICE_NAME) > 0) {
+		os_free(wpa_s->conf->device_name);
+		wpa_s->conf->device_name = os_strdup(WIFI_P2P_DEVICE_NAME);
+		if (wpa_s->conf->device_name == NULL) {
+			return -ENOMEM;
+		}
+		wpa_s->conf->changed_parameters |= CFG_CHANGED_DEVICE_NAME;
+		wpa_supplicant_update_config(wpa_s);
+	}
+#endif
+
+	return 0;
+}
+
 static int add_interface(struct supplicant_context *ctx, struct net_if *iface)
 {
 	struct wpa_supplicant *wpa_s;
@@ -450,6 +467,11 @@ static int add_interface(struct supplicant_context *ctx, struct net_if *iface)
 
 	wpa_s->conf->filter_ssids = 1;
 	wpa_s->conf->ap_scan = 1;
+
+	ret = wpa_supplicant_set_default_dev_name(wpa_s);
+	if (ret != 0) {
+		LOG_ERR("Failed to set P2P device name for %s", ifname);
+	}
 
 	/* Default interface, kick start supplicant */
 	if (get_iface_count(ctx) > 0) {
@@ -730,7 +752,7 @@ static void event_socket_handler(int sock, void *eloop_ctx, void *user_data)
 		}
 
 		if (msg->len != sizeof(event_msg)) {
-			LOG_ERR("Received incomplete message: got: %d, expected:%d",
+			LOG_ERR("Received incomplete message: got: %zu, expected:%zu",
 				msg->len, sizeof(event_msg));
 			goto out;
 		}
@@ -784,6 +806,8 @@ static void event_socket_handler(int sock, void *eloop_ctx, void *user_data)
 				os_free((char *)data->external_auth.bssid);
 				os_free((char *)data->external_auth.ssid);
 				os_free((char *)data->external_auth.mld_addr);
+			} else if (event_msg.event == EVENT_NAN_CLUSTER_JOIN) {
+				os_free((char *)data->nan_cluster_join_info.bssid);
 			}
 
 			os_free(event_msg.data);

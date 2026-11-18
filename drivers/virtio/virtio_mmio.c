@@ -154,7 +154,7 @@ static bool virtio_mmio_read_status_bit(const struct device *dev, int bit)
 
 static void virtio_mmio_write_status_bit(const struct device *dev, int bit)
 {
-	const uint32_t mask = sys_cpu_to_le32(BIT(bit));
+	const uint32_t mask = BIT(bit);
 	const uint32_t val = virtio_mmio_read32(dev, VIRTIO_MMIO_STATUS);
 
 	virtio_mmio_write32(dev, VIRTIO_MMIO_STATUS, val | mask);
@@ -338,8 +338,11 @@ static int virtio_mmio_init_common(const struct device *dev)
 		IRQ_CONNECT(DT_INST_IRQN(inst), DT_INST_IRQ(inst, priority), virtio_mmio_isr,      \
 			    DEVICE_DT_INST_GET(inst), 0);                                          \
 		int ret = virtio_mmio_init_common(dev);                                            \
+		if (ret != 0) {                                                                    \
+			return ret;                                                                \
+		}                                                                                  \
 		irq_enable(DT_INST_IRQN(inst));                                                    \
-		return ret;                                                                        \
+		return 0;                                                                          \
 	}                                                                                          \
 	DEVICE_DT_INST_DEFINE(inst, virtio_mmio_init##inst, NULL, &virtio_mmio_data##inst,         \
 			      &virtio_mmio_config##inst, POST_KERNEL, 0, &virtio_mmio_driver_api);

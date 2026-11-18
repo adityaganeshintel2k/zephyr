@@ -211,15 +211,15 @@ static int mbedtls_aead(struct cipher_ctx *ctx, struct cipher_aead_pkt *apkt, ui
 		return -EIO;
 	}
 
-	status = psa_aead_set_nonce(&psa_op, nonce, nonce_len);
-	if (status != PSA_SUCCESS) {
-		LOG_ERR("psa_aead_set_nonce() failed (%d)", status);
-		goto error;
-	}
-
 	status = psa_aead_set_lengths(&psa_op, apkt->ad_len, apkt->pkt->in_len);
 	if (status != PSA_SUCCESS) {
 		LOG_ERR("psa_aead_set_lengths() failed (%d)", status);
+		goto error;
+	}
+
+	status = psa_aead_set_nonce(&psa_op, nonce, nonce_len);
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("psa_aead_set_nonce() failed (%d)", status);
 		goto error;
 	}
 
@@ -448,10 +448,30 @@ static int mbedtls_hash_session_setup(const struct device *dev,
 		session->psa_alg = PSA_ALG_SHA_512;
 		break;
 #endif
+#if CONFIG_PSA_WANT_ALG_SHA3_224
+	case CRYPTO_HASH_ALGO_SHA3_224:
+		session->psa_alg = PSA_ALG_SHA3_224;
+		break;
+#endif
+#if CONFIG_PSA_WANT_ALG_SHA3_256
+	case CRYPTO_HASH_ALGO_SHA3_256:
+		session->psa_alg = PSA_ALG_SHA3_256;
+		break;
+#endif
+#if CONFIG_PSA_WANT_ALG_SHA3_384
+	case CRYPTO_HASH_ALGO_SHA3_384:
+		session->psa_alg = PSA_ALG_SHA3_384;
+		break;
+#endif
+#if CONFIG_PSA_WANT_ALG_SHA3_512
+	case CRYPTO_HASH_ALGO_SHA3_512:
+		session->psa_alg = PSA_ALG_SHA3_512;
+		break;
+#endif
 	default:
 		LOG_ERR("Unsupported algo: %d", algo);
 		mbedtls_free_session(session);
-		return -EINVAL;
+		return -ENOTSUP;
 	}
 
 	ctx->hash_hndlr = mbedtls_hash_compute;

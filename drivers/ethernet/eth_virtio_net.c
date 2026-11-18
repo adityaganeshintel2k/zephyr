@@ -86,7 +86,7 @@ enum _virtio_net_hdr_gso_types {
 };
 
 #define VIRTIO_NET_BUFLEN                                                                          \
-	(NET_ETH_MTU + sizeof(struct net_eth_hdr) + sizeof(struct _virtio_net_hdr))
+	(NET_ETH_MAX_FRAME_SIZE + sizeof(struct _virtio_net_hdr))
 /* virtqueue pairs are numbered from 1 upwards */
 /* convert pair number to virtqueue index */
 #define VIRTQ_RX(n) ((n - 1) * 2)
@@ -232,7 +232,7 @@ static int virtnet_dev_init(const struct device *dev)
 	return 0;
 }
 
-static struct ethernet_api virtnet_api = {
+static const struct ethernet_api virtnet_api = {
 	.iface_api.init = virtnet_if_init,
 	.get_capabilities = virtnet_get_capabilities,
 	.send = virtnet_send,

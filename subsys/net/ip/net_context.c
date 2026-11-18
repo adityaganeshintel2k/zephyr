@@ -1423,6 +1423,71 @@ int net_context_create_ipv6_new(struct net_context *context,
 }
 #endif /* CONFIG_NET_IPV6 */
 
+/* Get the interface the zone of a link-local or interface-local IPv6 peer
+ * names, NULL for other peers and for zone 0. Fails with -ENODEV if no
+ * interface has that index, and with -EINVAL if the socket is bound to another
+ * interface or to an address of another interface.
+ */
+static int get_zone_iface(struct net_context *context, const struct net_sockaddr_in6 *peer,
+			  struct net_if **iface)
+{
+	bool scoped = net_ipv6_is_ll_addr(&peer->sin6_addr) ||
+		      net_ipv6_is_addr_mcast_link(&peer->sin6_addr) ||
+		      net_ipv6_is_addr_mcast_iface(&peer->sin6_addr);
+
+	*iface = NULL;
+
+	if (!scoped || peer->sin6_scope_id == 0U) {
+		return 0;
+	}
+
+	*iface = net_if_get_by_index(peer->sin6_scope_id);
+	if (*iface == NULL) {
+		return -ENODEV;
+	}
+
+	if ((net_context_is_bound_to_iface(context) ||
+	     (net_context_is_local_addr_set(context) &&
+	      !net_ipv6_is_addr_unspecified(&net_sin6(&context->local)->sin6_addr))) &&
+	    net_context_get_iface(context) != *iface) {
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/* A TCP context bound neither to an interface nor to a unicast address got its
+ * interface at bind() time, from a peer that was not known yet. The source
+ * address is selected on that interface, so it must be the one the peer is
+ * reached through.
+ */
+static bool tcp_iface_from_peer(struct net_context *context)
+{
+	if (net_context_get_proto(context) != NET_IPPROTO_TCP ||
+	    net_context_is_bound_to_iface(context)) {
+		return false;
+	}
+
+	if (IS_ENABLED(CONFIG_NET_OFFLOAD) &&
+	    net_if_is_ip_offloaded(net_context_get_iface(context))) {
+		return false;
+	}
+
+	if (!net_context_is_local_addr_set(context)) {
+		return true;
+	}
+
+	if (IS_ENABLED(CONFIG_NET_IPV6) && net_context_get_family(context) == NET_AF_INET6) {
+		return net_ipv6_is_addr_unspecified(&net_sin6(&context->local)->sin6_addr);
+	}
+
+	if (IS_ENABLED(CONFIG_NET_IPV4) && net_context_get_family(context) == NET_AF_INET) {
+		return net_ipv4_is_addr_unspecified(&net_sin(&context->local)->sin_addr);
+	}
+
+	return false;
+}
+
 int net_context_connect(struct net_context *context,
 			const struct net_sockaddr *addr,
 			net_socklen_t addrlen,
@@ -1485,6 +1550,7 @@ int net_context_connect(struct net_context *context,
 	    net_context_get_family(context) == NET_AF_INET6) {
 		struct net_sockaddr_in6 *addr6 = (struct net_sockaddr_in6 *)
 							&context->remote;
+		struct net_if *zone_iface = NULL;
 
 		if (addrlen < sizeof(struct net_sockaddr_in6)) {
 			ret = -EINVAL;
@@ -1492,8 +1558,13 @@ int net_context_connect(struct net_context *context,
 		}
 
 		if (net_context_get_proto(context) == NET_IPPROTO_TCP &&
-		    net_ipv6_is_addr_mcast(&addr6->sin6_addr)) {
+		    net_ipv6_is_addr_mcast(&net_sin6(addr)->sin6_addr)) {
 			ret = -EADDRNOTAVAIL;
+			goto unlock;
+		}
+
+		ret = get_zone_iface(context, net_sin6(addr), &zone_iface);
+		if (ret < 0) {
 			goto unlock;
 		}
 
@@ -1502,6 +1573,12 @@ int net_context_connect(struct net_context *context,
 
 		addr6->sin6_port = net_sin6(addr)->sin6_port;
 		addr6->sin6_family = NET_AF_INET6;
+
+		if (zone_iface != NULL) {
+			addr6->sin6_scope_id = net_sin6(addr)->sin6_scope_id;
+		} else {
+			addr6->sin6_scope_id = 0U;
+		}
 
 		if (!net_ipv6_is_addr_unspecified(&addr6->sin6_addr)) {
 			context->flags |= NET_CONTEXT_REMOTE_ADDR_SET;
@@ -1522,6 +1599,19 @@ int net_context_connect(struct net_context *context,
 			goto unlock;
 		}
 
+		/* Replace the interface chosen at bind time with the one of the
+		 * zone, or else with the one the peer is reached through.
+		 */
+		if (zone_iface != NULL) {
+			net_context_set_iface(context, zone_iface);
+		} else if (tcp_iface_from_peer(context)) {
+			struct net_if *iface = net_if_ipv6_select_src_iface(&addr6->sin6_addr);
+
+			if (iface != NULL) {
+				net_context_set_iface(context, iface);
+			}
+		}
+
 		net_sin6(&context->local)->sin6_family = NET_AF_INET6;
 		net_sin6(local_addr)->sin6_family = NET_AF_INET6;
 		net_sin6(local_addr)->sin6_port = lport =
@@ -1537,16 +1627,22 @@ int net_context_connect(struct net_context *context,
 		   net_context_get_family(context) == NET_AF_INET) {
 		struct net_sockaddr_in *addr4 = (struct net_sockaddr_in *)
 							&context->remote;
+		struct net_if *iface = net_context_get_iface(context);
+		bool iface_from_peer;
 
 		if (addrlen < sizeof(struct net_sockaddr_in)) {
 			ret = -EINVAL;
 			goto unlock;
 		}
 
+		iface_from_peer = tcp_iface_from_peer(context);
+		if (iface_from_peer) {
+			iface = net_if_ipv4_select_src_iface(&net_sin(addr)->sin_addr);
+		}
+
 		if (net_context_get_proto(context) == NET_IPPROTO_TCP &&
-		    (net_ipv4_is_addr_mcast(&addr4->sin_addr) ||
-		     net_ipv4_is_addr_bcast(net_context_get_iface(context),
-					    &addr4->sin_addr))) {
+		    (net_ipv4_is_addr_mcast(&net_sin(addr)->sin_addr) ||
+		     net_ipv4_is_addr_bcast(iface, &net_sin(addr)->sin_addr))) {
 			ret = -EADDRNOTAVAIL;
 			goto unlock;
 		}
@@ -1568,6 +1664,13 @@ int net_context_connect(struct net_context *context,
 		ret = bind_default(context);
 		if (ret) {
 			goto unlock;
+		}
+
+		/* Replace the interface chosen at bind time with the one the
+		 * peer is reached through.
+		 */
+		if (iface_from_peer && iface != NULL) {
+			net_context_set_iface(context, iface);
 		}
 
 		net_sin(&context->local)->sin_family = NET_AF_INET;
@@ -2397,6 +2500,39 @@ static int context_setup_udp_options(struct net_context *context,
 }
 #endif /* CONFIG_NET_UDP_OPTIONS */
 
+static bool get_msg_src_addr_hint(const struct net_msghdr *msg, net_sa_family_t family,
+				  struct net_in6_addr *src6, struct net_in_addr *src4)
+{
+	struct net_cmsghdr *cmsg;
+
+	if (msg == NULL || msg->msg_control == NULL) {
+		return false;
+	}
+
+	for (cmsg = NET_CMSG_FIRSTHDR(msg); cmsg != NULL; cmsg = NET_CMSG_NXTHDR(msg, cmsg)) {
+		if (IS_ENABLED(CONFIG_NET_IPV6) && family == NET_AF_INET6 &&
+		    cmsg->cmsg_level == NET_IPPROTO_IPV6 && cmsg->cmsg_type == ZSOCK_IPV6_PKTINFO &&
+		    cmsg->cmsg_len == NET_CMSG_LEN(sizeof(struct net_in6_pktinfo))) {
+			struct net_in6_pktinfo *info =
+				(struct net_in6_pktinfo *)NET_CMSG_DATA(cmsg);
+
+			*src6 = info->ipi6_addr;
+			return true;
+		}
+
+		if (IS_ENABLED(CONFIG_NET_IPV4) && family == NET_AF_INET &&
+		    cmsg->cmsg_level == NET_IPPROTO_IP && cmsg->cmsg_type == ZSOCK_IP_PKTINFO &&
+		    cmsg->cmsg_len == NET_CMSG_LEN(sizeof(struct net_in_pktinfo))) {
+			struct net_in_pktinfo *info = (struct net_in_pktinfo *)NET_CMSG_DATA(cmsg);
+
+			*src4 = info->ipi_spec_dst;
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static int context_setup_udp_packet(struct net_context *context,
 				    net_sa_family_t family,
 				    struct net_pkt *pkt,
@@ -2409,20 +2545,37 @@ static int context_setup_udp_packet(struct net_context *context,
 {
 	int ret = -EINVAL;
 	uint16_t dst_port = 0U;
+	struct net_in6_addr src6;
+	struct net_in_addr src4;
+	bool have_src = get_msg_src_addr_hint(msg, family, &src6, &src4);
 
 	if (IS_ENABLED(CONFIG_NET_IPV6) && family == NET_AF_INET6) {
 		struct net_sockaddr_in6 *addr6 = (struct net_sockaddr_in6 *)dst_addr;
 
 		dst_port = addr6->sin6_port;
 
-		ret = context_create_ipv6_new(context, pkt, NULL,
+		/* Only honor the hint if the address is still owned by this
+		 * packet's interface; otherwise fall back to normal source
+		 * selection, e.g. if it was removed by a rebind in the meantime.
+		 */
+		if (have_src &&
+		    net_if_ipv6_addr_lookup_by_iface(net_pkt_iface(pkt), &src6) == NULL) {
+			have_src = false;
+		}
+
+		ret = context_create_ipv6_new(context, pkt, have_src ? &src6 : NULL,
 					      &addr6->sin6_addr, dont_fragment);
 	} else if (IS_ENABLED(CONFIG_NET_IPV4) && family == NET_AF_INET) {
 		struct net_sockaddr_in *addr4 = (struct net_sockaddr_in *)dst_addr;
 
 		dst_port = addr4->sin_port;
 
-		ret = context_create_ipv4_new(context, pkt, NULL,
+		if (have_src &&
+		    net_if_ipv4_addr_lookup_by_iface(net_pkt_iface(pkt), &src4) == NULL) {
+			have_src = false;
+		}
+
+		ret = context_create_ipv4_new(context, pkt, have_src ? &src4 : NULL,
 					      &addr4->sin_addr, dont_fragment);
 	}
 
@@ -2491,9 +2644,14 @@ static int context_setup_raw_ip_packet(net_sa_family_t family,
 			return -ENOBUFS;
 		}
 
+		hdr_len = (ipv4_hdr->vhl & 0x0F) * 4;
+		if (hdr_len < sizeof(struct net_ipv4_hdr) ||
+		    hdr_len > net_pkt_get_len(pkt)) {
+			return -EINVAL;
+		}
+
 		net_pkt_set_ip_hdr_len(pkt, sizeof(struct net_ipv4_hdr));
 
-		hdr_len = (ipv4_hdr->vhl & 0x0F) * 4;
 		if (hdr_len > sizeof(struct net_ipv4_hdr)) {
 			net_pkt_set_ipv4_opts_len(
 				pkt, hdr_len - sizeof(struct net_ipv4_hdr));
@@ -3920,6 +4078,7 @@ enum net_verdict net_context_packet_received(struct net_conn *conn,
 					     void *user_data)
 {
 	struct net_context *context = find_context(conn);
+	net_context_recv_cb_t recv_cb;
 	enum net_verdict verdict = NET_DROP;
 
 	NET_ASSERT(context);
@@ -3930,9 +4089,6 @@ enum net_verdict net_context_packet_received(struct net_conn *conn,
 	net_context_set_iface(context, net_pkt_iface(pkt));
 	net_pkt_set_context(pkt, context);
 
-	/* If there is no callback registered, then we can only drop
-	 * the packet.
-	 */
 	if (!context_allow_udp_options(context, pkt)) {
 		goto unlock;
 	}
@@ -3944,7 +4100,14 @@ enum net_verdict net_context_packet_received(struct net_conn *conn,
 	}
 #endif /* CONFIG_NET_UDP_OPTIONS_DPLPMTUD */
 
-	if (!context->recv_cb) {
+	/* If there is no callback registered, then we can only drop
+	 * the packet.
+	 *
+	 * Snapshot the callback while holding the context lock. Another thread
+	 * may disable receiving immediately after the unlock below.
+	 */
+	recv_cb = context->recv_cb;
+	if (!recv_cb) {
 		goto unlock;
 	}
 
@@ -3959,7 +4122,7 @@ enum net_verdict net_context_packet_received(struct net_conn *conn,
 
 	k_mutex_unlock(&context->lock);
 
-	context->recv_cb(context, pkt, ip_hdr, proto_hdr, 0, user_data);
+	recv_cb(context, pkt, ip_hdr, proto_hdr, 0, user_data);
 
 	verdict = NET_OK;
 

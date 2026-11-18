@@ -330,8 +330,10 @@ static ssize_t sc_ccc_cfg_write(struct bt_conn *conn,
 {
 	LOG_DBG("value 0x%04x", value);
 
-	if (value == BT_GATT_CCC_INDICATE) {
-		/* Create a new SC configuration entry if subscribed */
+	if ((value & BT_GATT_CCC_INDICATE) != 0U) {
+		/* Create a new SC configuration entry if subscribed; the CCC
+		 * value is a bit field and Reserved bits are ignored.
+		 */
 		sc_save(conn->id, &conn->le.dst, 0, 0);
 	} else {
 		sc_clear(conn);
@@ -1126,7 +1128,6 @@ BT_GATT_SERVICE_DEFINE(_1_gatt_svc,
 #endif /* CONFIG_BT_GATT_SERVICE_CHANGED */
 );
 
-#if defined(CONFIG_BT_GATT_DYNAMIC_DB)
 static uint8_t found_attr(const struct bt_gatt_attr *attr, uint16_t handle,
 			  void *user_data)
 {
@@ -1146,6 +1147,7 @@ static const struct bt_gatt_attr *find_attr(uint16_t handle)
 	return attr;
 }
 
+#if defined(CONFIG_BT_GATT_DYNAMIC_DB)
 static void gatt_insert(struct bt_gatt_service *svc, uint16_t last_handle)
 {
 	struct bt_gatt_service *tmp, *prev = NULL;
@@ -2153,8 +2155,15 @@ static void gatt_ccc_changed(const struct bt_gatt_attr *attr,
 		struct bt_conn *conn = bt_conn_lookup_addr_le(ccc->cfg[i].id, &ccc->cfg[i].peer);
 
 		if (conn) {
-			if (ccc->cfg[i].value > value) {
-				value = ccc->cfg[i].value;
+			/* Leave out Reserved bits, which a receiver ignores:
+			 * callbacks compare the value with BT_GATT_CCC_NOTIFY or
+			 * BT_GATT_CCC_INDICATE.
+			 */
+			uint16_t peer_value =
+				ccc->cfg[i].value & (BT_GATT_CCC_NOTIFY | BT_GATT_CCC_INDICATE);
+
+			if (peer_value > value) {
+				value = peer_value;
 			}
 
 			bt_conn_unref(conn);
@@ -2169,6 +2178,66 @@ static void gatt_ccc_changed(const struct bt_gatt_attr *attr,
 			ccc->cfg_changed(attr, value);
 		}
 	}
+}
+
+/* Look up the properties of the characteristic that the given CCC descriptor
+ * belongs to, i.e. the nearest preceding characteristic declaration that is not
+ * separated from it by a service declaration.
+ *
+ * Returns false if no such declaration could be found or read, in which case
+ * the caller must not draw any conclusion from the properties.
+ */
+static bool ccc_get_chrc_props(const struct bt_gatt_attr *ccc_attr, uint8_t *properties)
+{
+	uint16_t ccc_handle = bt_gatt_attr_get_handle(ccc_attr);
+	uint16_t handle;
+
+	if (ccc_handle <= BT_ATT_FIRST_ATTRIBUTE_HANDLE) {
+		return false;
+	}
+
+	for (handle = ccc_handle - 1; handle >= BT_ATT_FIRST_ATTRIBUTE_HANDLE; handle--) {
+		const struct bt_gatt_attr *attr = find_attr(handle);
+		ssize_t len;
+
+		if (attr == NULL) {
+			return false;
+		}
+
+		/* Service and include declarations can only appear before the
+		 * characteristic definitions of a service, so finding one means
+		 * no owning declaration exists.
+		 */
+		if (bt_uuid_cmp(attr->uuid, BT_UUID_GATT_PRIMARY) == 0 ||
+		    bt_uuid_cmp(attr->uuid, BT_UUID_GATT_SECONDARY) == 0 ||
+		    bt_uuid_cmp(attr->uuid, BT_UUID_GATT_INCLUDE) == 0) {
+			LOG_WRN("CCC 0x%04x has no characteristic declaration", ccc_handle);
+			return false;
+		}
+
+		if (bt_uuid_cmp(attr->uuid, BT_UUID_GATT_CHRC) != 0) {
+			continue;
+		}
+
+		if (attr->read == NULL) {
+			LOG_WRN("Characteristic declaration 0x%04x is not readable", handle);
+			return false;
+		}
+
+		/* The characteristic properties are the first octet of the
+		 * declaration value.
+		 */
+		len = attr->read(NULL, attr, properties, sizeof(*properties), 0);
+		if (len != sizeof(*properties)) {
+			LOG_WRN("Reading characteristic declaration 0x%04x failed (%zd != %zu)",
+				handle, len, sizeof(*properties));
+			return false;
+		}
+
+		return true;
+	}
+
+	return false;
 }
 
 ssize_t bt_gatt_attr_write_ccc(struct bt_conn *conn,
@@ -2192,6 +2261,26 @@ ssize_t bt_gatt_attr_write_ccc(struct bt_conn *conn,
 		value = *(uint8_t *)buf;
 	} else {
 		value = sys_get_le16(buf);
+	}
+
+	if ((value & (BT_GATT_CCC_NOTIFY | BT_GATT_CCC_INDICATE)) != 0) {
+		uint8_t properties;
+
+		/* Reject configurations the characteristic cannot deliver. If
+		 * the declaration cannot be located the write is let through,
+		 * so that a database built by other means than the
+		 * BT_GATT_CHARACTERISTIC() macros keeps working.
+		 */
+		if (ccc_get_chrc_props(attr, &properties)) {
+			if (((value & BT_GATT_CCC_NOTIFY) != 0 &&
+			     (properties & BT_GATT_CHRC_NOTIFY) == 0) ||
+			    ((value & BT_GATT_CCC_INDICATE) != 0 &&
+			     (properties & BT_GATT_CHRC_INDICATE) == 0)) {
+				LOG_DBG("CCC 0x%04x value 0x%04x unsupported by properties 0x%02x",
+					bt_gatt_attr_get_handle(attr), value, properties);
+				return BT_GATT_ERR(BT_ATT_ERR_CCC_IMPROPER_CONF);
+			}
+		}
 	}
 
 	cfg = find_ccc_cfg(conn, ccc);
@@ -2312,11 +2401,14 @@ struct notify_data {
 
 #if defined(CONFIG_BT_GATT_NOTIFY_MULTIPLE)
 
+/* Pending notification batch of each connection. The notifying threads, the
+ * flush work and the disconnection cleanup all take and send or drop these
+ * buffers, so every access holds the host lock.
+ */
 static struct net_buf *nfy_mult[CONFIG_BT_MAX_CONN];
 
 static int gatt_notify_mult_send(struct bt_conn *conn, struct net_buf *buf)
 {
-	int ret;
 	uint8_t *pdu = buf->data;
 	/* PDU structure is [Opcode (1)] [Handle (2)] [Length (2)] [Value (Length)] */
 	uint16_t first_attr_len = sys_get_le16(&pdu[3]);
@@ -2339,17 +2431,14 @@ static int gatt_notify_mult_send(struct bt_conn *conn, struct net_buf *buf)
 		LOG_DBG("Converted BT_ATT_OP_NOTIFY_MULT with single attr to BT_ATT_OP_NOTIFY");
 	}
 
-	ret = bt_att_send(conn, buf);
-	if (ret < 0) {
-		net_buf_unref(buf);
-	}
-
-	return ret;
+	return bt_att_send(conn, buf);
 }
 
 static void notify_mult_process(struct k_work *work)
 {
 	int i;
+
+	bt_dev_lock();
 
 	/* Send to any connection with an allocated buffer */
 	for (i = 0; i < ARRAY_SIZE(nfy_mult); i++) {
@@ -2363,6 +2452,8 @@ static void notify_mult_process(struct k_work *work)
 			bt_conn_unref(conn);
 		}
 	}
+
+	bt_dev_unlock();
 }
 
 K_WORK_DELAYABLE_DEFINE(nfy_mult_work, notify_mult_process);
@@ -2384,10 +2475,14 @@ static int gatt_notify_flush(struct bt_conn *conn)
 	int err = 0;
 	struct net_buf **buf = &nfy_mult[bt_conn_index(conn)];
 
+	bt_dev_lock();
+
 	if (*buf) {
 		err = gatt_notify_mult_send(conn, *buf);
 		*buf = NULL;
 	}
+
+	bt_dev_unlock();
 
 	return err;
 }
@@ -2396,7 +2491,9 @@ static void cleanup_notify(struct bt_conn *conn)
 {
 	struct net_buf **buf = &nfy_mult[bt_conn_index(conn)];
 
+	bt_dev_lock();
 	net_buf_drop(buf);
+	bt_dev_unlock();
 }
 
 static void gatt_add_nfy_to_buf(struct net_buf *buf,
@@ -2416,45 +2513,85 @@ static int gatt_notify_mult(struct bt_conn *conn, uint16_t handle,
 			    struct bt_gatt_notify_params *params)
 {
 	struct net_buf **buf = &nfy_mult[bt_conn_index(conn)];
+	struct net_buf *new_buf;
+	int ret;
+
+	LOG_DBG("handle 0x%04x len %u", handle, params->len);
+
+	bt_dev_lock();
 
 	/* Check if we can fit more data into it, in case it doesn't fit send
-	 * the existing buffer and proceed to create a new one
+	 * the existing buffer and proceed to create a new one. The ATT buffers
+	 * are sized for the local ATT_MTU, which the negotiated one can be
+	 * smaller than.
 	 */
 	if (*buf && ((net_buf_tailroom(*buf) < sizeof(struct bt_att_notify_mult) + params->len) ||
+	    ((*buf)->len + sizeof(struct bt_att_notify_mult) + params->len >
+	     bt_att_get_mtu(conn)) ||
 	    !bt_att_tx_meta_data_match(*buf, params->func, params->user_data,
 				       BT_ATT_CHAN_OPT(params)))) {
-		int ret;
-
 		ret = gatt_notify_mult_send(conn, *buf);
 		*buf = NULL;
 		if (ret < 0) {
+			bt_dev_unlock();
 			return ret;
 		}
 	}
 
-	if (!*buf) {
-		*buf = bt_att_create_pdu(conn, BT_ATT_OP_NOTIFY_MULT,
-					 sizeof(struct bt_att_notify_mult) + params->len);
-		if (!*buf) {
-			return -ENOMEM;
-		}
-
-		bt_att_set_tx_meta_data(*buf, params->func, params->user_data,
-					BT_ATT_CHAN_OPT(params));
-	} else {
+	if (*buf != NULL) {
 		/* Increment the number of handles, ensuring the notify callback
 		 * gets called once for every attribute.
 		 */
 		bt_att_increment_tx_meta_data_attr_count(*buf, 1);
+		gatt_add_nfy_to_buf(*buf, handle, params);
+		bt_work_schedule(&nfy_mult_work, K_MSEC(CONFIG_BT_GATT_NOTIFY_MULTIPLE_FLUSH_MS));
+		bt_dev_unlock();
+
+		return 0;
 	}
 
-	LOG_DBG("handle 0x%04x len %u", handle, params->len);
-	gatt_add_nfy_to_buf(*buf, handle, params);
+	bt_dev_unlock();
+
+	/* The allocation can block, so the host lock is not held across it */
+	new_buf = bt_att_create_pdu(conn, BT_ATT_OP_NOTIFY_MULT,
+				    sizeof(struct bt_att_notify_mult) + params->len);
+	if (new_buf == NULL) {
+		return -ENOMEM;
+	}
+
+	bt_att_set_tx_meta_data(new_buf, params->func, params->user_data, BT_ATT_CHAN_OPT(params));
+	gatt_add_nfy_to_buf(new_buf, handle, params);
+
+	bt_dev_lock();
+
+	/* During the allocation the connection may have been disconnected,
+	 * and its cleanup would not drop a buffer stored after it, or another
+	 * thread may have started a batch.
+	 */
+	if (conn->state != BT_CONN_CONNECTED) {
+		bt_dev_unlock();
+		net_buf_unref(new_buf);
+		return -ENOTCONN;
+	}
+
+	if (*buf != NULL) {
+		ret = gatt_notify_mult_send(conn, *buf);
+		*buf = NULL;
+		if (ret < 0) {
+			bt_dev_unlock();
+			net_buf_unref(new_buf);
+			return ret;
+		}
+	}
+
+	*buf = new_buf;
 
 	/* Use `bt_work_schedule` to keep the original deadline, instead of
 	 * re-setting the timeout whenever a new notification is appended.
 	 */
 	bt_work_schedule(&nfy_mult_work, K_MSEC(CONFIG_BT_GATT_NOTIFY_MULTIPLE_FLUSH_MS));
+
+	bt_dev_unlock();
 
 	return 0;
 }
@@ -2566,11 +2703,15 @@ static struct bt_att_req *gatt_req_alloc(bt_att_func_t func, void *params,
 		return NULL;
 	}
 
-#if defined(CONFIG_BT_SMP)
+#if defined(CONFIG_BT_ATT_RETRY_ON_SEC_ERR)
 	req->att_op = op;
 	req->len = len;
 	req->encode = encode;
-#endif
+#else
+	ARG_UNUSED(encode);
+	ARG_UNUSED(op);
+	ARG_UNUSED(len);
+#endif /* CONFIG_BT_ATT_RETRY_ON_SEC_ERR */
 	req->func = func;
 	req->user_data = params;
 
@@ -2744,10 +2885,11 @@ static uint8_t notify_cb(const struct bt_gatt_attr *attr, uint16_t handle,
 		struct bt_conn *conn;
 		int err;
 
-		/* Check if config value matches data type since consolidated
-		 * value may be for a different peer.
+		/* The consolidated value may be for a different peer, and the
+		 * CCC value is a bit field: a peer may have enabled both
+		 * notifications and indications, and Reserved bits are ignored.
 		 */
-		if (cfg->value != data->type) {
+		if ((cfg->value & data->type) == 0U) {
 			continue;
 		}
 
@@ -2993,8 +3135,17 @@ static int gatt_notify_multiple_verify_params(struct bt_conn *conn,
 	const struct bt_gatt_attr *attr = NULL;
 
 	for (uint16_t i = 0; i < num_params; i++) {
-		/* Compute the total data length. */
-		*total_len += params[i].len;
+		/* Compute the total PDU length: each value is preceded by its
+		 * handle and length.
+		 */
+		*total_len += sizeof(struct bt_att_notify_mult) + params[i].len;
+
+		/* PDU length is specified with a 16-bit value. Checking it
+		 * for every value also keeps the sum from wrapping.
+		 */
+		if (*total_len > UINT16_MAX) {
+			return -ERANGE;
+		}
 
 		/* If attribute is a characteristic declaration, resolve to the value
 		 * attribute to ensure the correct permissions are checked
@@ -3037,14 +3188,8 @@ static int gatt_notify_multiple_verify_params(struct bt_conn *conn,
 		}
 	}
 
-	/* PDU length is specified with a 16-bit value. */
-	if (*total_len > UINT16_MAX) {
-		return -ERANGE;
-	}
-
 	/* Check there is a bearer with a high enough MTU. */
-	if (bt_att_get_mtu(conn) <
-	    (sizeof(struct bt_att_notify_mult) + *total_len)) {
+	if (bt_att_get_mtu(conn) < (sizeof(struct bt_att_hdr) + *total_len)) {
 		return -ERANGE;
 	}
 
@@ -3079,8 +3224,7 @@ int bt_gatt_notify_multiple(struct bt_conn *conn,
 	gatt_notify_flush(conn);
 
 	/* Build the PDU */
-	buf = bt_att_create_pdu(conn, BT_ATT_OP_NOTIFY_MULT,
-				sizeof(struct bt_att_notify_mult) + total_len);
+	buf = bt_att_create_pdu(conn, BT_ATT_OP_NOTIFY_MULT, total_len);
 	if (!buf) {
 		return -ENOMEM;
 	}

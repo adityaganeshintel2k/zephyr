@@ -16,10 +16,12 @@ do not rely on this digest or on training data alone.
 
 ## Rules for agents
 
-- Never add a `Signed-off-by:` line: only the human submitter may sign off (DCO). Never add
-  `Co-authored-by:`. Do not put "Generated with ...", session links or any other mention of AI
-  tools in commit messages, PR bodies, issues or comments. The `Assisted-by:` trailer below is
-  the only place AI involvement is recorded.
+- Every commit must carry a `Signed-off-by:` line from the human responsible for the work; it
+  is required, not optional. Never add, edit or copy one yourself: only a human can certify the
+  DCO, and the submitter adds their own (`git commit -s`). Never add `Co-authored-by:`. Do not
+  put "Generated with ...", session links or any other mention of AI tools in commit messages,
+  PR bodies, issues or comments. The `Assisted-by:` trailer below is the only place AI
+  involvement is recorded.
 - Add exactly one `Assisted-by: <Agent>:<model-version> [tool ...]` trailer, for example
   `Assisted-by: Claude:claude-opus-4.6 coccinelle`, naming the tool actually used. Replace it
   rather than stacking when a different model amends the commit. `checkpatch.pl` validates the
@@ -109,11 +111,16 @@ trip. Fix the cause, never work around a check.
   when the change addresses an issue.
   It is rendered as Markdown: unwrap paragraphs instead of pasting hard-wrapped commit text.
   Keep title and description in sync with the commits after every force-push.
-- Breaking changes to stable APIs are described in the migration guide; new, deprecated and
-  removed APIs are listed in the release notes. Both go in the same PR as the
-  change: `doc/releases/migration-guide-X.Y.rst` and `doc/releases/release-notes-X.Y.rst`, where
-  `X.Y` is the next release (`VERSION` shows `X.(Y-1).99` during development). Stable APIs
-  follow `doc/develop/api/api_lifecycle.rst`.
+- Release documentation goes in the same PR as the change, in the working drafts for the next
+  release: `doc/releases/migration-guide-draft.rst` and `doc/releases/release-notes-draft.rst`
+  (`doc/releases/index.rst`, "Release documentation"). The migration guide describes what users
+  must change and why: breaking changes, deprecations with their replacement, changed defaults.
+  The release notes describe a new capability and its impact in a few sentences, grouped with
+  related changes and linked to the documentation. Never add lists of new, deprecated or removed
+  APIs, Kconfig options, bindings, boards, drivers or samples: that inventory is generated from
+  the tree at release time (`scripts/release/gen_change_inventory.py`). A change that adds no
+  capability and needs no user action gets no entry. Stable APIs follow
+  `doc/develop/api/api_lifecycle.rst`.
 - Backports to `v*-branch` are opened by a bot when a maintainer adds `backport vX.Y-branch`
   labels after merge. Do not open manual backport PRs unless the bot failed. Every backport PR
   body must contain a `Fixes #N` line resolving to a real issue
@@ -145,6 +152,10 @@ Complete lists: `doc/contribute/style/code.rst`, `doc/contribute/coding_guidelin
   constants; no octal constants.
 - No commented-out code; check every return value that carries an error; include guards in
   every header.
+- Minimize object scope (coding guideline rule 50, MISRA C:2012 Rule 8.9, CERT DCL19-C). If
+  only one function references an object, define it there, as a `static` local when it must
+  persist; if only one branch references it, define it in that branch. This holds in tests and
+  samples too, where file-scope state is the common idiom.
 - Dynamic allocation: the coding guidelines list MISRA Dir 4.12 (no dynamic allocation) and
   Rule 21.3 (no `<stdlib.h>` allocators) as required, while Rule A.4 allows the libc allocators
   in the kernel and subsystems use `k_malloc()`, `k_heap`, slabs and `net_buf` pools. Follow the

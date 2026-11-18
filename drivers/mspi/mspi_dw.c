@@ -121,6 +121,7 @@ struct mspi_dw_config {
 	uint8_t max_queued_dummy_bytes;
 	uint8_t tx_fifo_threshold;
 	uint8_t rx_fifo_threshold;
+	uint8_t rx_sample_dly;
 #ifdef CONFIG_MSPI_DMA
 	uint8_t dma_tx_data_level;
 	uint8_t dma_rx_data_level;
@@ -1016,6 +1017,8 @@ static int _api_dev_config(const struct device *dev,
 		dev_data->max_clocks_per_ce = 0;
 	}
 
+	vendor_specific_dev_config(dev, param_mask, cfg);
+
 	return 0;
 }
 
@@ -1901,12 +1904,13 @@ static int _api_xip_config(const struct device *dev,
 		ctrl.write |= FIELD_PREP(XIP_WRITE_CTRL_WAIT_CYCLES_MASK,
 					 params->tx_dummy);
 
-		/* Make sure the baud rate and serial clock phase/polarity
-		 * registers are configured properly. They may not be if
-		 * non-XIP transfers have not been performed yet.
+		/* Make sure the baud rate, serial clock phase/polarity and RX
+		 * sample delay registers are configured properly. They may not
+		 * be if non-XIP transfers have not been performed yet.
 		 */
 		write_ctrlr0(dev, dev_data->ctrlr0);
 		write_baudr(dev, dev_data->baudr);
+		write_rx_sample_dly(dev, dev_data->rx_sample_dly);
 
 		write_xip_incr_inst(dev, params->read_cmd);
 		write_xip_wrap_inst(dev, params->read_cmd);
@@ -2018,6 +2022,11 @@ static int dev_pm_action_cb(const struct device *dev,
 #endif
 		vendor_specific_resume(dev);
 
+		/* Make sure controller is disabled. Not done in dev_init() as the
+		 * core registers may be inaccessible until vendor_specific_resume().
+		 */
+		write_ssienr(dev, 0);
+
 		dev_data->suspended = false;
 
 		return 0;
@@ -2028,17 +2037,9 @@ static int dev_pm_action_cb(const struct device *dev,
 		bool xip_enabled = COND_CODE_1(CONFIG_MSPI_MEMMAP,
 					       (dev_data->xip_enabled != 0),
 					       (false));
+		int rc = 0;
 
-#if defined(CONFIG_PINCTRL)
-		const struct mspi_dw_config *dev_config = dev->config;
-		int rc = pinctrl_apply_state(dev_config->pcfg,
-					     PINCTRL_STATE_SLEEP);
 
-		if (rc < 0) {
-			LOG_ERR("Cannot apply sleep pins state (%d)", rc);
-			return rc;
-		}
-#endif
 #if defined(CONFIG_MULTITHREADING)
 		if (xip_enabled ||
 		    k_sem_take(&dev_data->ctx_lock, K_NO_WAIT) != 0) {
@@ -2049,15 +2050,25 @@ static int dev_pm_action_cb(const struct device *dev,
 			return -EBUSY;
 		}
 
-		dev_data->suspended = true;
+#if defined(CONFIG_PINCTRL)
+		const struct mspi_dw_config *dev_config = dev->config;
 
-		vendor_specific_suspend(dev);
+		rc = pinctrl_apply_state(dev_config->pcfg, PINCTRL_STATE_SLEEP);
+		if (rc < 0) {
+			LOG_ERR("Cannot apply sleep pins state (%d)", rc);
+		}
+#endif
+		if (rc >= 0) {
+			dev_data->suspended = true;
+
+			vendor_specific_suspend(dev);
+		}
 
 #if defined(CONFIG_MULTITHREADING)
 		k_sem_give(&dev_data->ctx_lock);
 #endif
 
-		return 0;
+		return rc;
 	}
 
 	return -ENOTSUP;
@@ -2076,6 +2087,7 @@ static int dev_init(const struct device *dev)
 
 	dev_data->ctrlr0 |= FIELD_PREP(CTRLR0_SSI_IS_MST_BIT,
 				       dev_config->op_mode == MSPI_OP_MODE_CONTROLLER);
+	dev_data->rx_sample_dly = dev_config->rx_sample_dly;
 
 	dev_config->irq_config();
 
@@ -2119,15 +2131,7 @@ static int dev_init(const struct device *dev)
 	}
 #endif
 
-	rc = pm_device_driver_init(dev, dev_pm_action_cb);
-	if (rc < 0) {
-		return rc;
-	}
-
-	/* Make sure controller is disabled. */
-	write_ssienr(dev, 0);
-
-	return 0;
+	return pm_device_driver_init(dev, dev_pm_action_cb);
 }
 
 static DEVICE_API(mspi, drv_api) = {
@@ -2186,7 +2190,8 @@ static DEVICE_API(mspi, drv_api) = {
 				7 * TX_FIFO_DEPTH(inst) / 8 - 1),	\
 	.rx_fifo_threshold =						\
 		DT_INST_PROP_OR(inst, rx_fifo_threshold,		\
-				1 * RX_FIFO_DEPTH(inst) / 8 - 1)
+				1 * RX_FIFO_DEPTH(inst) / 8 - 1),	\
+	.rx_sample_dly = DT_INST_PROP_OR(inst, rx_sample_delay_initial, 0)
 
 #define MSPI_DW_DMA_DATA_LEVELS(inst)					\
 	.dma_tx_data_level =						\

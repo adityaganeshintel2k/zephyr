@@ -460,6 +460,7 @@ int usbh_device_set_configuration(struct usb_device *const udev, const uint8_t n
 		LOG_ERR("Configuration descriptor read mismatch");
 		k_heap_free(&usb_device_heap, udev->cfg_desc);
 		udev->cfg_desc = NULL;
+		err = -EINVAL;
 		goto error;
 	}
 
@@ -583,8 +584,8 @@ error:
 	return err;
 }
 
-void usbh_device_connect(struct usbh_context *const ctx,
-			 struct usb_device *const udev)
+int usbh_device_connect(struct usbh_context *const ctx,
+			struct usb_device *const udev)
 {
 	int err;
 
@@ -594,6 +595,7 @@ void usbh_device_connect(struct usbh_context *const ctx,
 
 	if (ctx->root == NULL) {
 		ctx->root = udev;
+		udev->level = 1;
 	}
 
 	err = usbh_device_init(udev);
@@ -604,7 +606,7 @@ void usbh_device_connect(struct usbh_context *const ctx,
 		}
 
 		usbh_device_free(udev);
-		return;
+		return err;
 	}
 
 	/*
@@ -626,6 +628,8 @@ void usbh_device_connect(struct usbh_context *const ctx,
 			break;
 		}
 	}
+
+	return 0;
 }
 
 void usbh_device_disconnect(struct usbh_context *ctx, struct usb_device *udev)

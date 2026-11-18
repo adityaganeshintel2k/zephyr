@@ -22,6 +22,16 @@ config HTTP_PARSER_STRICT
 	help
 	  This option enables the strict parsing option
 
+config HTTP_PARSER_MAX_HEADER_SIZE
+	int "HTTP maximum header size allowed"
+	default 81920
+	range 32 $(UINT32_MAX)
+	depends on HTTP_PARSER
+	help
+	  This option configures the HTTP maximum header size allowed.
+	  To remove the effective limit on the size of the header, configure this option to a very
+	  large number.
+
 config HTTP_CLIENT
 	bool "HTTP client API"
 	select HTTP_PARSER
@@ -247,6 +257,19 @@ config HTTP_SERVER_WEBSOCKET
 	  upgraded to a Websocket connection. The user can then define a Websocket
 	  handler that is called after upgrading to handle the Websocket network
 	  traffic.
+
+config HTTP_SERVER_TCP_NODELAY
+	bool "Disable Nagle's algorithm on accepted connections"
+	default y
+	help
+	  Set TCP_NODELAY on every accepted TCP connection. The server sends
+	  a response in more than one piece whenever the socket cannot gather
+	  them, which is the case for every TLS socket, where each piece
+	  becomes its own record. With Nagle's algorithm enabled the second
+	  piece waits until the client acknowledges the first, and a client
+	  that delays its acknowledgements holds every response back by that
+	  delay, typically 40 ms or more. Disable this option to keep Nagle's
+	  algorithm and send fewer, larger segments at the cost of latency.
 
 config HTTP_SERVER_RESOURCE_WILDCARD
 	bool "Allow wildcard matching of resources"

@@ -38,6 +38,7 @@
 #include <hal/nrf_lfxo.h>
 #include <hal/nrf_gpio.h>
 
+#include <approtect_setup.h>
 #include <wicr_setup.h>
 
 LOG_MODULE_REGISTER(soc, CONFIG_SOC_LOG_LEVEL);
@@ -45,6 +46,7 @@ LOG_MODULE_REGISTER(soc, CONFIG_SOC_LOG_LEVEL);
 #define LFXO_NODE DT_NODELABEL(lfxo)
 
 #if !defined(CONFIG_TRUSTED_EXECUTION_NONSECURE)
+#if !defined(CONFIG_SOC_SERIES_NRF71_SKIP_PREV_IMAGE_INIT)
 
 struct mpc_region_override {
 	nrf_mpc_override_config_t config;
@@ -146,6 +148,23 @@ static inline NRF_SPU_Type *spu_instance_from_peripheral_addr(uint32_t periphera
 	return (NRF_SPU_Type *)(0x50000000 | apb_bus_number);
 }
 
+static void oscillators_configuration(void)
+{
+	NRF_SPU_Type *spu_instance = spu_instance_from_peripheral_addr(NRF_OSCILLATORS_S_BASE);
+	uint16_t periph_id = NRFX_PERIPHERAL_ID_GET(NRF_OSCILLATORS_S_BASE);
+	uint16_t spu_id = NRFX_PERIPHERAL_ID_GET(spu_instance);
+	uint8_t index = (uint8_t)(periph_id - spu_id);
+
+	/*
+	 * Wi-Fi is non-secure and configures the PLL in NRF_OSCILLATORS.
+	 * NRF_OSCILLATORS and NRF_REGULATORS share a peripheral ID and must
+	 * therefore have the same security configuration.
+	 */
+	nrf_spu_periph_perm_secattr_set(spu_instance, index, false);
+	nrf_spu_periph_perm_lock_enable(spu_instance, index);
+}
+#endif /* !CONFIG_SOC_SERIES_NRF71_SKIP_PREV_IMAGE_INIT */
+
 static void grtc_configuration(void)
 {
 	/* Split security configuration to let Wi-Fi access GRTC */
@@ -163,35 +182,41 @@ static void ipct_configuration(void)
 }
 #endif /* CONFIG_TRUSTED_EXECUTION_NONSECURE */
 
-#if defined(CONFIG_SOC_NRF71_WIFI_BOOT)
 #if (defined(NRF_APPLICATION) && !defined(CONFIG_TRUSTED_EXECUTION_NONSECURE)) || \
 	!defined(__ZEPHYR__)
-#if DT_HAS_COMPAT_STATUS_OKAY(nordic_nrf71_wifi_antsw)
-#define WIFI_ANTSW_NODE DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf71_wifi_antsw)
+#if DT_HAS_COMPAT_STATUS_OKAY(nordic_nrf71_antsw)
+#define ANTSW_NODE DT_COMPAT_GET_ANY_STATUS_OKAY(nordic_nrf71_antsw)
 
 /* Steering an unpowered switch is meaningless: require pwr_antswc to power it. */
 BUILD_ASSERT(DT_HAS_COMPAT_STATUS_OKAY(nordic_nrf_pwr_antswc),
-	     "wifi-antsw steering requires pwr_antswc to power the antenna switch");
+	     "antsw steering requires pwr_antswc to power the antenna switch");
 
 /*
- * Steer the antenna switch (ANTSW) towards WLAN before the Wi-Fi core is
- * started. This runs before the GPIO driver is up, so the pin (described in
- * devicetree) is configured directly through the nrf_gpio HAL, which keeps the
- * access on the P0 alias that matches the build's security state. Powering the
- * switch is handled separately by pwr_antswc.
+ * Steer the antenna switch (ANTSW) towards its Kconfig-selected default
+ * radio (CONFIG_SOC_SERIES_NRF71_ANTSW_DEFAULT) before either radio that
+ * shares it starts using it. This runs before the GPIO driver is up, so the
+ * pin (described in devicetree) is configured directly through the nrf_gpio
+ * HAL, which keeps the access on the P0 alias that matches the build's
+ * security state. Powering the switch is handled separately by pwr_antswc.
  */
 static void antsw_setup(void)
 {
-	uint32_t wlan_psel = NRF_DT_GPIOS_TO_PSEL(WIFI_ANTSW_NODE, wlan_gpios);
+	uint32_t sel_psel = NRF_DT_GPIOS_TO_PSEL(ANTSW_NODE, sel_gpios);
 
-	/* Drive the pin low (WLAN) before enabling the output, then configure it
-	 * as a plain output. No pull is needed on a driven output.
+	/* Drive the pin to the WLAN or BLE position before enabling the output,
+	 * then configure it as a plain output. No pull is needed on a driven
+	 * output.
 	 */
-	nrf_gpio_pin_clear(wlan_psel);
-	nrf_gpio_cfg_output(wlan_psel);
+	if (IS_ENABLED(CONFIG_SOC_SERIES_NRF71_ANTSW_DEFAULT_BLE)) {
+		nrf_gpio_pin_set(sel_psel);
+	} else {
+		nrf_gpio_pin_clear(sel_psel);
+	}
+	nrf_gpio_cfg_output(sel_psel);
 }
-#endif /* DT_HAS_COMPAT_STATUS_OKAY(nordic_nrf71_wifi_antsw) */
+#endif /* DT_HAS_COMPAT_STATUS_OKAY(nordic_nrf71_antsw) */
 
+#if defined(CONFIG_SOC_NRF71_WIFI_BOOT)
 static void wifi_setup(void)
 {
 	/* Kickstart the LMAC processor */
@@ -220,13 +245,20 @@ int nordicsemi_nrf71_init(void)
 
 #if !defined(CONFIG_TRUSTED_EXECUTION_NONSECURE)
 	/* Skip for tf-m, configuration exist in target_cfg_71.c */
+#if !defined(CONFIG_SOC_SERIES_NRF71_SKIP_PREV_IMAGE_INIT)
+	oscillators_configuration();
 	mpc_configuration();
+#endif
 	grtc_configuration();
 	ipct_configuration();
 #endif
 
 #if (defined(NRF_APPLICATION) && !defined(CONFIG_TRUSTED_EXECUTION_NONSECURE)) || \
 	!defined(__ZEPHYR__)
+#if defined(CONFIG_SOC_NRF7120_APPROTECT_BOOT_WORKAROUND)
+	approtect_setup();
+#endif
+
 #if defined(CONFIG_SOC_NRF7120_WICR_SETUP)
 	int ret = wicr_setup();
 
@@ -237,20 +269,42 @@ int nordicsemi_nrf71_init(void)
 #endif
 
 #if DT_HAS_COMPAT_STATUS_OKAY(nordic_nrf_pwr_antswc)
-	/* Power on the antenna switch before starting the Wi-Fi core. */
+	/* Power on the antenna switch before steering it or starting the Wi-Fi core. */
 	*(volatile uint32_t *)PWR_ANTSWC_REG |= PWR_ANTSWC_ENABLE;
 #endif
 
-#if defined(CONFIG_SOC_NRF71_WIFI_BOOT)
-#if DT_HAS_COMPAT_STATUS_OKAY(nordic_nrf71_wifi_antsw)
-	/* Steer the (now powered) antenna switch towards WLAN before Wi-Fi boot. */
+#if DT_HAS_COMPAT_STATUS_OKAY(nordic_nrf71_antsw)
+	/* Steer the (now powered) antenna switch towards its default radio. */
 	antsw_setup();
 #endif
+
+#if defined(CONFIG_SOC_NRF71_WIFI_BOOT)
 	wifi_setup();
 #endif
 
+#if !DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(gpio4))
+	/* Powered off. */
+	nrf_gpio_port_pwrctrl_t pwrctrl = NRF_GPIO_PORT_PWRCTRL_OFF;
+#elif DT_ENUM_HAS_VALUE(DT_NODELABEL(gpio4), nordic_pad_voltage, 1v8)
+	/* Intended for VDDIO = 1.8 V. */
+	nrf_gpio_port_pwrctrl_t pwrctrl = NRF_GPIO_PORT_PWRCTRL_FLOATING_GND_0V;
+#else
+	/* Intended for VDDIO > 1.8 V. */
+	nrf_gpio_port_pwrctrl_t pwrctrl = NRF_GPIO_PORT_PWRCTRL_FLOATING_GND_BUF;
+#endif
+
+	/* Power P4 on or off explicitly, as the boards disagree on its initial state.
+	 * This should be turned off when not using P4 as it can draw roughly 40 uA of
+	 * current, even in System OFF.
+	 *
+	 * The selected voltage mode must match what actually drives the port's VDDIO
+	 * pin on the board; mismatching them can damage the port.
+	 */
+	nrf_gpio_port_pwrctrl_set(NRF_P4, pwrctrl);
+
 	/* Configure LFXO capacitive load if internal load capacitors are used */
-#if DT_ENUM_HAS_VALUE(LFXO_NODE, load_capacitors, internal)
+#if DT_ENUM_HAS_VALUE(LFXO_NODE, load_capacitors, internal) && \
+	!defined(CONFIG_SOC_SERIES_NRF71_SKIP_PREV_IMAGE_INIT)
 	nrf_lfxo_cload_set(NRF_LFXO,
 			(uint8_t)(DT_PROP(LFXO_NODE, load_capacitance_femtofarad) / 1000));
 #endif
@@ -264,19 +318,15 @@ int nordicsemi_nrf71_init(void)
 	return 0;
 }
 
-void soc_early_init_hook(void)
-{
-	(void)nordicsemi_nrf71_init();
-}
-
 void arch_busy_wait(uint32_t time_us)
 {
 	nrfx_coredep_delay_us(time_us);
 }
 
-#ifdef CONFIG_SOC_RESET_HOOK
+#if defined(CONFIG_SOC_RESET_HOOK) && defined(CONFIG_ARM)
 void soc_reset_hook(void)
 {
 	SystemInit();
+	nordicsemi_nrf71_init();
 }
 #endif
